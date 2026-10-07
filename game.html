@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Tiny Pirate Ships</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Rubik:wght@700;800;900&display=swap">
+<style>
+/* Игра: 3D-поле на весь экран, UI в DOM по прямоугольникам из layout.js, скин из art/sprites. Один игровой вид. */
+:root {
+  --sea: #0E8E69; --ink: #08090B; --gold: #DEB550; --blue: #3995DF; --red: #D8524F; --panel: #264654; --pill: #1C2F3E;
+  --rar: #1EFF00; --f: "Rubik", "Arial Black", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace; --s: 1;
+  color-scheme: dark;
+}
+html { box-sizing: border-box; height: 100%; } *, *::before, *::after { box-sizing: inherit; }
+body { margin: 0; height: 100%; overflow: hidden; background: #0b5b47; color: #fff; font-family: var(--f);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+#app { position: fixed; inset: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+#stage, #ui { position: absolute; left: 0; right: 0; top: env(safe-area-inset-top, 0px); bottom: env(safe-area-inset-bottom, 0px); }
+#ui { pointer-events: none; }
+#ui > *, .layer > * { position: absolute; }
+#ui img, #stage img { max-width: none; max-height: none; }   /* страница-обёртка артефакта задаёт img { max-width: 100% }, это сжимало фон главного */
+.layer { position: absolute; inset: 0; pointer-events: none; }
+#vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(120% 85% at 50% 45%, rgba(255,255,255,.07), rgba(0,0,0,0) 55%, rgba(0,25,18,.4) 100%); }
+#app:not([data-screen="prep"]):not([data-screen="battle"]):not([data-screen="boarding"]):not([data-screen="cards"]):not([data-screen="enter"]) #vig { display: none; }
+.txt, .float, .lbl, .n, .t, .nm { font-weight: 900; color: #fff; -webkit-text-stroke: calc(4px * var(--s)) var(--ink); paint-order: stroke fill; letter-spacing: .01em; }
+img.fill { position: absolute; inset: 0; width: 100%; height: 100%; }
+button, .btn, .roundBtn, .pickCard, .unitCard, .tab, .avatar { pointer-events: auto; cursor: pointer; }
+.avatar::after { content: ""; position: absolute; inset: calc(-6px * var(--s)); }   /* зона касания аватара 56 pt при картинке 44 */
+
+/* HUD */
+.avatar img.emb { position: absolute; left: 18%; top: 16%; width: 64%; height: 64%; object-fit: contain; }
+.avatar.isReady { filter: drop-shadow(0 0 calc(5px * var(--s)) #3fd17f); }
+.cardIcon { position: absolute; right: -14%; bottom: -14%; width: 44%; height: 44%; border-radius: 22%; border: calc(2px * var(--s)) solid; background: #1a2126 center / 78% no-repeat; }
+.bar { border-radius: calc(6px * var(--s)); background: rgba(0,0,0,.5); border: calc(2px * var(--s)) solid var(--ink); overflow: hidden; }
+.bar i { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; transition: width .35s ease; }
+.bar .trail { background: #ffd7a6; transition: width .6s ease .1s; }
+.bar.p .fill { background: linear-gradient(#5fb0ef, #2f78dd); } .bar.e .fill { background: linear-gradient(#ef7d77, #c9433c); }
+.bar.e i { left: auto; right: 0; }
+.bar.crit { animation: barCrit .6s ease-in-out infinite alternate; }   /* корпус ниже 25%: полоска пульсирует красным */
+@keyframes barCrit { to { box-shadow: 0 0 calc(10px * var(--s)) rgba(255,70,50,.95); border-color: #ff5a46; } }
+.bar b { position: absolute; inset: 0; display: grid; place-items: center; font-size: calc(11px * var(--s)); -webkit-text-stroke: calc(3px * var(--s)) var(--ink); paint-order: stroke fill; }
+.crew { display: flex; align-items: center; gap: calc(4px * var(--s)); background: rgba(0,0,0,.35); border-radius: calc(9px * var(--s)); padding: 0 calc(6px * var(--s)); }
+.crew.e { flex-direction: row-reverse; }
+.crew .ic { height: 80%; } .crew .n { font-size: calc(14px * var(--s)); }
+.readyCheck { border-radius: 50%; background: #3fd17f; border: calc(2px * var(--s)) solid #fff; display: grid; place-items: center; font: 900 calc(12px * var(--s)) var(--f); color: #fff; }
+.vs img { object-fit: contain; }
+.vs .t { position: absolute; inset: 0; display: grid; place-items: center; font-size: calc(14px * var(--s)); padding-bottom: 6%; }
+.roundN { display: grid; place-items: center; font-size: calc(13px * var(--s)); white-space: nowrap; }
+
+/* низ */
+.coins { display: flex; align-items: center; justify-content: center; gap: calc(6px * var(--s)); background: var(--pill); border: calc(2px * var(--s)) solid rgba(0,0,0,.5); border-radius: 999px; padding: 0 calc(8px * var(--s)); }
+.coins .ic { height: 82%; } .coins .n { font-size: calc(18px * var(--s)); font-variant-numeric: tabular-nums; }
+.income { display: grid; place-items: center; background: var(--gold); color: #1a2126; font: 900 calc(13px * var(--s)) var(--f); border-radius: 999px; border: calc(2px * var(--s)) solid #8a5a0a; }
+.income.pop { animation: pop .35s ease; }
+.income { transition: opacity .2s ease, transform .25s cubic-bezier(.2,1.5,.4,1); }
+.income.off { opacity: 0; transform: scale(.4); }
+.incomeFly { z-index: 25; pointer-events: none; transition: transform .42s cubic-bezier(.5,-.25,.6,1), opacity .42s ease-in; }
+@keyframes pop { 50% { transform: scale(1.25); } }
+.btn { display: grid; place-items: center; }
+.btn .face, .btn .lip { position: absolute; left: 0; right: 0; border-style: solid; }
+.btn .lip { bottom: 0; height: 45%; border-width: calc(10px * var(--s)); border-image: url(art/sprites/lip_blue.png) 20 fill / calc(10px * var(--s)) stretch; }
+.btn .face { top: 0; bottom: calc(5px * var(--s)); border-width: calc(14px * var(--s)); border-image: url(art/sprites/btn_blue.png) 40 fill / calc(14px * var(--s)) stretch; transition: transform .08s; }
+.btn.gold .face { border-image-source: url(art/sprites/btn_gold.png); } .btn.gold .lip { border-image-source: url(art/sprites/lip_gold.png); }
+.btn.dark .face { border-image-source: url(art/sprites/btn_dark.png); } .btn.dark .lip { border-image-source: url(art/sprites/lip_dark.png); }
+.btn:active .face { transform: translateY(calc(4px * var(--s))) scale(.97); filter: brightness(.92); }
+.btn .lbl { position: relative; font-size: calc(19px * var(--s)); margin-top: calc(-4px * var(--s)); }
+.btn.cta .lbl { font-size: calc(26px * var(--s)); }
+.results .btn.cta .lbl { font-size: calc(22px * var(--s)); }   /* «Продолжить» длинное: на Rubik 26 px упиралось в борта кнопки */
+.hireBtn { grid-template-rows: auto auto; align-content: center; }
+/* акцент кнопки: ореол дышит, по лицу пробегает блик, по углам вспыхивают искры */
+.btn.hot, .roundBtn.hot { z-index: 1; isolation: isolate; }
+.btn.hot { animation: hotBreath 1.4s ease-in-out infinite; }
+@keyframes hotBreath { 50% { transform: scale(1.045); } }
+.btn.hot::before { content: ""; position: absolute; inset: -22% -10%; z-index: -1; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,214,90,.75), rgba(255,170,40,.35) 55%, rgba(255,170,40,0)); animation: hotHalo 1.4s ease-in-out infinite; pointer-events: none; }
+.btn.blue.hot::before { background: radial-gradient(closest-side, rgba(190,240,255,.95), rgba(80,170,255,.5) 55%, rgba(60,150,255,0)); }
+@keyframes hotHalo { 50% { opacity: .55; transform: scale(1.08); } }
+.btn .shine { position: absolute; left: 0; right: 0; top: 0; bottom: calc(5px * var(--s)); border-radius: calc(18px * var(--s)); overflow: hidden; pointer-events: none; display: none; }
+.btn.hot .shine { display: block; }
+.btn .shine::before, .btn .shine::after { content: ""; position: absolute; top: -20%; bottom: -20%; width: 34%; left: -60%; transform: skewX(-22deg); background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.75) 45%, rgba(255,255,255,.95) 50%, rgba(255,255,255,.75) 55%, rgba(255,255,255,0)); animation: sweep 2.3s cubic-bezier(.4,0,.2,1) infinite; }
+.btn .shine::after { width: 10%; animation-delay: .12s; opacity: .8; }
+@keyframes sweep { 0% { left: -60%; } 45%, 100% { left: 140%; } }
+.btn .spk { position: absolute; width: calc(24px * var(--s)); height: calc(24px * var(--s)); display: none; pointer-events: none; background: radial-gradient(closest-side, #fff, rgba(255,255,255,0)); clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); animation: twinkle 1.8s ease-in-out infinite; }
+.btn.hot .spk { display: block; }
+.btn .spk.s0 { left: 4%; top: -12%; } .btn .spk.s1 { right: 3%; top: 10%; animation-delay: .6s; width: calc(18px * var(--s)); height: calc(18px * var(--s)); } .btn .spk.s2 { left: 46%; bottom: -8%; animation-delay: 1.2s; }
+@keyframes twinkle { 0%, 60%, 100% { transform: scale(0) rotate(0); } 30% { transform: scale(1.2) rotate(45deg); } }
+/* круглая кнопка: бегущее кольцо света */
+.roundBtn.hot { animation: hotBreath 1.4s ease-in-out infinite; }
+.roundBtn.hot::before { content: ""; position: absolute; inset: 2%; border-radius: 50%; background: conic-gradient(from 0deg, rgba(255,255,255,0) 0 70%, rgba(255,255,255,.95) 80%, rgba(255,255,255,0) 90%); -webkit-mask: radial-gradient(closest-side, transparent 78%, #000 80%, #000 98%, transparent); mask: radial-gradient(closest-side, transparent 78%, #000 80%, #000 98%, transparent); animation: spin 1.2s linear infinite; pointer-events: none; z-index: 2; }
+.roundBtn.hot::after { content: ""; position: absolute; inset: -14%; z-index: -1; border-radius: 50%; background: radial-gradient(closest-side, rgba(120,255,140,.7), rgba(120,255,140,0)); animation: hotHalo 1.4s ease-in-out infinite; pointer-events: none; }
+/* подсветка пары для мерджа */
+.cboost { position: absolute; transform: translate(-50%, -100%); pointer-events: none; font: 900 calc(13px * var(--s)) var(--f); color: #10200a; background: #8ef06a; border: calc(2px * var(--s)) solid #10200a; border-radius: 999px; padding: calc(1px * var(--s)) calc(7px * var(--s)); animation: cbIn .18s ease-out; }
+@keyframes cbIn { from { transform: translate(-50%, -60%) scale(.6); opacity: 0; } to { transform: translate(-50%, -100%) scale(1); opacity: 1; } }
+.cutin { position: absolute; left: 0; right: 0; height: calc(64px * var(--s)); transform: translateY(-50%); display: flex; align-items: center; gap: calc(12px * var(--s)); padding: 0 calc(18px * var(--s));
+  pointer-events: none; z-index: 15; animation: cutIn 1.1s cubic-bezier(.2,.9,.2,1) forwards; box-shadow: 0 calc(4px * var(--s)) 0 rgba(0,0,0,.35); }
+.cutin.mine { background: linear-gradient(90deg, rgba(30,110,230,.95), rgba(30,110,230,.6) 70%, rgba(30,110,230,0)); }
+.cutin.foe { background: linear-gradient(270deg, rgba(220,50,40,.95), rgba(220,50,40,.6) 70%, rgba(220,50,40,0)); flex-direction: row-reverse; animation-name: cutInR; }
+.cutin img { height: 120%; border-radius: calc(10px * var(--s)); border: calc(3px * var(--s)) solid #fff; box-shadow: 0 0 0 calc(2px * var(--s)) var(--ink); }
+.cutin b { font: 900 calc(24px * var(--s)) var(--f); color: #fff; -webkit-text-stroke: calc(5px * var(--s)) var(--ink); paint-order: stroke fill; white-space: nowrap; }
+@keyframes cutIn { 0% { transform: translate(-100%, -50%); } 18% { transform: translate(0, -50%); } 78% { transform: translate(4%, -50%); opacity: 1; } 100% { transform: translate(110%, -50%); opacity: 0; } }
+@keyframes cutInR { 0% { transform: translate(100%, -50%); } 18% { transform: translate(0, -50%); } 78% { transform: translate(-4%, -50%); opacity: 1; } 100% { transform: translate(-110%, -50%); opacity: 0; } }
+.uring { position: absolute; width: calc(34px * var(--s)); height: calc(34px * var(--s)); filter: drop-shadow(0 0 calc(2px * var(--s)) rgba(0,0,0,.8)); transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+  background: conic-gradient(#ffd34a var(--p, 0deg), rgba(255,255,255,.35) 0); -webkit-mask: radial-gradient(circle, transparent 50%, #000 52%); mask: radial-gradient(circle, transparent 50%, #000 52%); }
+.uring.full { animation: urFull .25s ease-in-out infinite alternate; } @keyframes urFull { to { transform: translate(-50%, -50%) scale(1.3); filter: brightness(1.5); } }
+.mglow { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; border: calc(3px * var(--s)) solid #8ff7ff; box-shadow: 0 0 calc(14px * var(--s)) #59e8ff, inset 0 0 calc(10px * var(--s)) rgba(89,232,255,.6); animation: mg .6s ease-in-out infinite alternate; pointer-events: none; }
+@keyframes mg { to { opacity: .45; transform: translate(-50%, -50%) scale(1.12); } }
+.tapHand { position: absolute; width: calc(46px * var(--s)); pointer-events: none; filter: drop-shadow(0 2px 2px rgba(0,0,0,.4)); animation: tapHand .9s ease-in-out infinite; z-index: 3; }
+@keyframes tapHand { 0%, 100% { transform: translate(0, 0) rotate(-20deg); } 50% { transform: translate(calc(-4px * var(--s)), calc(10px * var(--s))) rotate(-20deg) scale(.92); } }
+.hireBtn .lbl { font-size: calc(19px * var(--s)); line-height: 1; }
+.hireBtn .price { position: relative; display: flex; align-items: center; gap: calc(3px * var(--s)); margin-top: calc(2px * var(--s)); }
+.hireBtn .price img { height: calc(15px * var(--s)); } .hireBtn .price b { font: 900 calc(15px * var(--s)) var(--f); -webkit-text-stroke: calc(3px * var(--s)) var(--ink); paint-order: stroke fill; }
+.hireBtn.poor .price b { color: #ff8a80; }
+.hireBtn.off { filter: grayscale(1) brightness(.75); pointer-events: none; }
+/* Reroll: та же кнопка тонируется в фиолетовый (синий занят Hire, зелёный Fight, тёмный читается как выключенная, золото у главной кнопки),
+   вихрь крутится внутри подписи и ничего не закрывает над кнопкой; свечение плотно к краю, чтобы не залезать на счётчик */
+.hireBtn.reroll .face, .hireBtn.reroll .lip { filter: hue-rotate(38deg) saturate(1.15) brightness(.95); }
+.hireBtn.reroll { animation: rrGlow 0.9s ease-in-out infinite alternate; }
+.hireBtn.reroll .lbl { animation: rrFlip .12s ease-out; }
+.hireBtn.reroll .lbl::before { content: ""; display: inline-block; width: 1em; height: 1em; margin-right: .22em; vertical-align: -.14em; background: url(art/sprites/ic_swirl.png) center / contain no-repeat; animation: spin 1.1s linear infinite; }
+.hireBtn.reroll.armed { animation: none; transform: translateY(calc(3px * var(--s))) scale(.97); filter: drop-shadow(0 0 calc(6px * var(--s)) rgba(196,140,255,.95)) brightness(1.12); }
+.hireBtn.reroll.armed .lbl::before { animation-duration: .45s; }
+.hireBtn.reroll.locked .face, .hireBtn.reroll.locked .lip { filter: grayscale(1) brightness(.8); }
+.hireBtn.reroll.locked { animation: none; }
+@keyframes rrGlow { from { filter: drop-shadow(0 0 0 rgba(180,120,255,0)); } to { filter: drop-shadow(0 0 calc(5px * var(--s)) rgba(180,120,255,.85)); } }
+@keyframes rrFlip { from { transform: rotateX(90deg); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.roundBtn .rlip, .roundBtn .rface { position: absolute; left: 9%; right: 9%; top: 9%; bottom: 9%; background: url(art/sprites/round_steel.png) center / contain no-repeat; }
+.roundBtn .rlip { background-image: url(art/sprites/round_lip.png); transform: translateY(calc(4px * var(--s))); }
+.roundBtn.green .rface, .roundBtn.done .rface { background-image: url(art/sprites/round_green.png); }
+.roundBtn.done { filter: brightness(.85); }
+.roundBtn.off .rface, .roundBtn.off .lbl { filter: grayscale(1) brightness(.75); }
+.roundBtn .lbl.word { font-size: calc(16px * var(--s)); letter-spacing: .02em; }
+.roundBtn.green .lbl.word { animation: swordsIn .35s cubic-bezier(.3,1.8,.5,1); }
+.roundBtn .lbl .swords { width: calc(42px * var(--s)); height: calc(42px * var(--s)); display: block; filter: drop-shadow(0 calc(2px * var(--s)) 0 rgba(42,14,5,.6)); }
+.roundBtn.green .lbl .swords { animation: swordsIn .35s cubic-bezier(.3,1.8,.5,1); }
+@keyframes swordsIn { from { transform: scale(.3) rotate(-30deg); } }
+.roundBtn:active .rface { transform: translateY(calc(3px * var(--s))) scale(.96); }
+.roundBtn .ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.roundBtn .trk { fill: none; stroke: rgba(255,255,255,.18); stroke-width: 6; }
+.roundBtn .arc { fill: none; stroke: #fff; stroke-width: 6; stroke-linecap: round; stroke-dasharray: 100 100; transition: stroke-dasharray .1s linear; }
+.roundBtn.warn .arc { stroke: #ff6b5e; } .roundBtn.warn { animation: pulse .5s ease-in-out infinite alternate; }
+@keyframes pulse { to { transform: scale(1.05); } }
+.roundBtn .lbl { position: absolute; inset: 0; display: grid; place-items: center; font-size: calc(20px * var(--s)); padding-bottom: 4%; }
+.roundBtn.x2on .rface { background-image: url(art/sprites/round_green.png); }
+.no { animation: no .25s ease 3; }
+@keyframes no { 25% { transform: translateX(calc(-4px * var(--s))); } 75% { transform: translateX(calc(4px * var(--s))); } }
+
+/* баннер, полоска силы, карты */
+.banner { display: grid; place-items: center; background: rgba(9,15,19,.8); border-top: 2px solid var(--gold); border-bottom: 2px solid var(--gold); font: 900 calc(26px * var(--s)) var(--f); -webkit-text-stroke: calc(5px * var(--s)) var(--ink); paint-order: stroke fill; pointer-events: none; }
+.banner.in { animation: bin .3s ease; } @keyframes bin { from { transform: scaleY(0); opacity: 0; } }
+.power { border-radius: 999px; background: linear-gradient(#ef7d77, #c9433c); border: calc(2px * var(--s)) solid var(--gold); overflow: hidden; display: grid; place-items: center; }
+.power .pf { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(#5fb0ef, #2f78dd); transition: width .9s cubic-bezier(.3,1.4,.5,1); }
+.power b { position: relative; font: 900 calc(14px * var(--s)) var(--f); -webkit-text-stroke: calc(3px * var(--s)) var(--ink); paint-order: stroke fill; }
+.cardsUi { background: rgba(3,9,12,.6); pointer-events: auto; }
+.cardsTitle { display: grid; place-items: center; font-size: calc(18px * var(--s)); white-space: nowrap; }
+.cardsUi { perspective: calc(900px * var(--s)); }
+/* карта усиления: рамка по редкости (арт), картинка в арке под рамкой, имя на ленте, число и строка в нижней панели */
+.pickCard { background: none; border: 0; transition: transform .25s cubic-bezier(.2,1.4,.4,1), opacity .25s; animation: cardIn .5s cubic-bezier(.2,1.4,.4,1) backwards; }
+@keyframes cardIn { from { transform: rotateY(90deg) scale(.6); opacity: 0; } }
+.pickCard .cf { position: absolute; filter: drop-shadow(0 calc(4px * var(--s)) 0 rgba(0,0,0,.45)); }
+.pickCard.r2 .cf { animation: epicGlow 1.1s ease-in-out .8s infinite alternate; }
+@keyframes epicGlow { from { filter: drop-shadow(0 calc(4px * var(--s)) 0 rgba(0,0,0,.45)) drop-shadow(0 0 calc(3px * var(--s)) rgba(200,140,255,.6)); } to { filter: drop-shadow(0 calc(4px * var(--s)) 0 rgba(0,0,0,.45)) drop-shadow(0 0 calc(12px * var(--s)) rgba(255,215,106,.95)); } }
+.pickCard .ill { position: absolute; background: center 30% / cover no-repeat; border-radius: 50% 50% 0 0 / 34% 34% 0 0; }
+.pickCard .frm { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pickCard b { position: absolute; display: grid; place-items: center; padding-bottom: 2%; font: 900 calc(12px * var(--s)) var(--f); color: #fff; -webkit-text-stroke: calc(3.5px * var(--s)) var(--ink); paint-order: stroke fill; white-space: nowrap; }
+.pickCard .pan { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(1px * var(--s)); }
+.pickCard em { font: 900 calc(19px * var(--s)) var(--f); font-style: normal; line-height: 1; color: #fff; -webkit-text-stroke: calc(4px * var(--s)) var(--ink); paint-order: stroke fill; }
+.pickCard small { font: 800 calc(8.5px * var(--s)) var(--f); color: #fff; text-align: center; line-height: 1.12; max-height: 2.3em; padding: 0 2%; overflow: hidden; text-shadow: 0 1px 1px rgba(0,0,0,.7); }
+.pickCard.r0 small { color: #4a2c12; text-shadow: none; }
+.pickCard u { text-decoration: none; font: 800 calc(9px * var(--s)) var(--f); color: var(--rc); -webkit-text-stroke: calc(3px * var(--s)) var(--ink); paint-order: stroke fill; }
+.pickCard .spk { position: absolute; width: calc(20px * var(--s)); height: calc(20px * var(--s)); background: radial-gradient(closest-side, #fff, rgba(255,255,255,0)); clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); animation: twinkle 1.8s ease-in-out infinite; pointer-events: none; }
+.pickCard .spk.s0 { left: -8%; top: 8%; } .pickCard .spk.s1 { right: -8%; top: 42%; animation-delay: .6s; } .pickCard .spk.s2 { left: 42%; bottom: -6%; animation-delay: 1.2s; }
+.pickCard.chosen { transform: scale(1.12) translateY(-6%); } .pickCard.gone { opacity: 0; transform: scale(.8) translateY(10%); }
+.cspark { position: absolute; width: calc(12px * var(--s)); height: calc(12px * var(--s)); pointer-events: none; z-index: 20; clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
+.cardIcon.flip { animation: cflip .5s cubic-bezier(.2,1.5,.4,1); } @keyframes cflip { from { transform: rotateY(90deg) scale(1.8); } }
+.float.cardName { font-size: calc(13px * var(--s)); color: #ffd84a; animation-duration: 2s; }
+.tripleMark { transform: translate(-50%, -50%); border-radius: 50%; border: calc(3px * var(--s)) solid #ffd84a; box-shadow: 0 0 calc(12px * var(--s)) #ffd84a; animation: tm .5s ease-in-out infinite alternate; }
+.tripleMark b { position: absolute; left: 50%; top: -32%; transform: translateX(-50%); font: 900 calc(16px * var(--s)) var(--f); color: #ffd84a; -webkit-text-stroke: calc(4px * var(--s)) var(--ink); paint-order: stroke fill; }
+@keyframes tm { to { opacity: .5; transform: translate(-50%, -50%) scale(1.08); } }
+.hand { width: calc(44px * var(--s)); transform: translate(-30%, -10%) rotate(-20deg); filter: drop-shadow(0 2px 2px rgba(0,0,0,.4)); }
+.float { transform: translate(-50%, -50%); font-size: calc(17px * var(--s)); animation: fl .9s ease-out forwards; white-space: nowrap; }
+.float.gold { color: #ffd84a; } .float.curse { color: #7dff9b; font-size: calc(13px * var(--s)); } .float.zap { color: #bfe8ff; font-size: calc(13px * var(--s)); } .float.boom { color: #ffb05a; font-size: calc(15px * var(--s)); } .float.block { color: #a8eeff; font-size: calc(13px * var(--s)); } .float.dmg { color: #ff8a80; font-size: calc(13px * var(--s)); } .float.heal { color: #7dff9b; } .float.ramp { font-size: calc(18px * var(--s)); color: #ffd84a; }
+@keyframes fl { 0% { transform: translate(-50%, -30%) scale(.6); opacity: 0; } 20% { transform: translate(-50%, -60%) scale(1.15); opacity: 1; } 100% { transform: translate(-50%, -160%) scale(1); opacity: 0; } }
+.flyCoin { width: calc(22px * var(--s)); transform: translate(0,0); transition: transform .45s cubic-bezier(.5,-.3,.6,1); margin: calc(-11px * var(--s)) 0 0 calc(-11px * var(--s)); }
+/* золото меты: слитки тяжелее монет, летят с провисом и без отскока */
+.flyIngot { width: calc(34px * var(--s)); transform: translate(0,0); transition: transform .5s cubic-bezier(.6,-.25,.75,.9); margin: calc(-10px * var(--s)) 0 0 calc(-17px * var(--s)); z-index: 40; }
+/* добыча: куча монет в центре, переплавка в слиток */
+.lootHeap { width: calc(46px * var(--s)); height: calc(46px * var(--s)); transform: translate(-50%, -50%); z-index: 30; pointer-events: none; }
+.lootHeap::before { content: ""; position: absolute; inset: -70%; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,226,120,.85), rgba(255,170,40,.35) 55%, rgba(255,170,40,0)); }
+.lootHeap .hc { position: absolute; inset: 0; width: 100%; height: 100%; }
+.lootHeap .hv { position: absolute; left: 50%; top: 112%; transform: translateX(-50%); font-size: calc(20px * var(--s)); color: #ffd84a; white-space: nowrap; }
+.lootHeap.bump .hc { animation: pop .2s ease; }
+.lootHeap.melt::before { animation: meltGlow .34s ease-in forwards; }
+.lootHeap.melt .hc { animation: meltCoin .34s ease-in forwards; }
+@keyframes meltGlow { to { transform: scale(1.6); background: radial-gradient(closest-side, #fff, rgba(255,230,150,.8) 45%, rgba(255,170,40,0)); } }
+@keyframes meltCoin { 40% { transform: scale(1.25); filter: brightness(1.6); } to { transform: scale(.2); filter: brightness(3); opacity: .2; } }
+.lootIngot { width: calc(78px * var(--s)); height: calc(44px * var(--s)); transform: translate(-50%, -50%); z-index: 41; pointer-events: none; }
+.lootIngot .ing { position: absolute; left: 0; top: 0; width: 100%; animation: ingotIn .5s cubic-bezier(.2,1.6,.4,1) both; transform-origin: 50% 90%; }
+.lootIngot .lv { position: absolute; left: 50%; top: 118%; transform: translateX(-50%); font-size: calc(22px * var(--s)); color: #ffd84a; white-space: nowrap; animation: ingotIn .4s ease .12s both; }
+.lootIngot .lring { position: absolute; left: 50%; top: 50%; width: calc(40px * var(--s)); height: calc(40px * var(--s)); margin: calc(-20px * var(--s)) 0 0 calc(-20px * var(--s)); border-radius: 50%; border: calc(4px * var(--s)) solid #ffe08a; opacity: 0; animation: lring .5s ease-out forwards; }
+.lootIngot .lstar { position: absolute; left: 50%; top: 50%; width: calc(16px * var(--s)); height: calc(16px * var(--s)); margin: calc(-8px * var(--s)) 0 0 calc(-8px * var(--s)); background: #fff3b0; clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); opacity: 0; animation: lstar .65s ease-out forwards; }
+.lootIngot.fly { transition: transform .55s cubic-bezier(.45,-.2,.35,1.15); }
+.lootIngot.fly .lv, .lootIngot.fly .lstar, .lootIngot.fly .lring { opacity: 0 !important; transition: opacity .15s; animation: none; }
+@keyframes ingotIn { 0% { transform: translateY(calc(-30px * var(--s))) scale(.2); opacity: 0; } 60% { transform: translateY(0) scale(1.18, .86); opacity: 1; } 80% { transform: scale(.95, 1.06); } 100% { transform: none; } }
+@keyframes lring { 0% { opacity: .95; transform: scale(.3); } 100% { opacity: 0; transform: scale(3.2); } }
+@keyframes lstar { 0% { opacity: 1; transform: translate(0, 0) scale(.4); } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1) rotate(90deg); } }
+#app[data-time="evening"] #vig { background: linear-gradient(rgba(255,150,80,.16), rgba(255,150,80,0) 28%), radial-gradient(120% 90% at 50% 40%, rgba(0,0,0,0) 50%, rgba(24,8,40,.5) 100%); }
+
+/* экраны вне матча */
+.splash { background: #0a2a24; pointer-events: auto; }
+.splash img.bg { position: absolute; object-fit: cover; }
+/* размытая подложка за артом: видна только на окнах шире колонки игры */
+.splash img.backdrop, .main img.backdrop { position: absolute; inset: -4%; width: 108%; height: 108%; object-fit: cover; filter: blur(18px) brightness(.55) saturate(1.1); pointer-events: none; }
+.scrimLow { position: absolute; left: 0; right: 0; bottom: 0; height: 32%; background: linear-gradient(rgba(5,9,12,0), rgba(5,9,12,.55) 45%, rgba(5,9,12,.85)); }
+.sTitle { display: grid; place-items: center; font-size: calc(19px * var(--s)); }
+.sTitle.found { font-size: calc(27px * var(--s)); animation: pop .4s ease; white-space: nowrap; }
+.sTime { display: grid; place-items: center; font-size: calc(36px * var(--s)); font-variant-numeric: tabular-nums; }
+.loadBar { border-radius: 999px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.3); overflow: hidden; } .loadBar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #fff; }
+.main { background: linear-gradient(#5fb2e6 0%, #bfe3f4 48%, #0E8E69 52%, #07604c 100%); pointer-events: auto; }
+.main img.mainBg { position: absolute; display: block; }
+.splash img.logo { position: absolute; object-fit: contain; filter: drop-shadow(0 4px 6px rgba(0,0,0,.35)); }
+.counter { display: flex; align-items: center; justify-content: center; gap: calc(6px * var(--s)); background: rgba(0,0,0,.4); border-radius: 999px; padding: 0 calc(8px * var(--s)); }
+.counter .ic { height: 80%; } .counter .n { font-size: calc(17px * var(--s)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.counter { overflow: hidden; } .counter .ic { flex: none; }
+.unitCard img.por { position: absolute; left: 11%; top: 7%; width: 78%; height: 66%; object-fit: cover; object-position: 50% 15%; border-radius: 5%; }
+.unitCard img.frame { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* подпись карточки: кегль обычный, а в ширину плашки текст вгоняется масштабом (transform), см. fitNames в game.js.
+   Масштаб не зависит от минимального кегля и увеличения текста в настройках телефона, в отличие от font-size */
+.unitCard .nm { position: absolute; left: 8%; right: 8%; bottom: 6%; text-align: center; font-size: calc(10px * var(--s)); white-space: nowrap; overflow: visible; }
+.unitCard .nm { height: 1.3em; } .unitCard .nm span { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); transform-origin: 50% 70%; }
+.unitCard:active { transform: scale(.96); }
+.tabbar { background: #0b1a22; border-top: 1px solid rgba(255,255,255,.1); }
+.tab { position: absolute; display: grid; place-items: center; align-content: center; gap: 2px; } .tab .ic { height: calc(26px * var(--s)); width: auto; display: block; } .tab.on { background: rgba(255,255,255,.07); box-shadow: inset 0 3px 0 var(--gold); } .tab .t { font-size: calc(11px * var(--s)); }
+.tab:not(.on) .ic { opacity: .75; }
+.tab .ic.flat { height: calc(24px * var(--s)); filter: drop-shadow(0 calc(2px * var(--s)) 0 rgba(0,0,0,.45)); }   /* плоская белая иконка из SVG: тень снизу, как у объёмных */
+.results { background: radial-gradient(90% 60% at 50% 35%, #1f5a68, #0b2b33); pointer-events: auto; }
+.plaque img.fill { object-fit: contain; }
+/* итоги: лучи, свечение, плашка с отскоком и бликом, звёзды, строки по очереди, конфетти */
+.results .rays { border-radius: 50%; opacity: 0; pointer-events: none;
+  background: repeating-conic-gradient(from 0deg, rgba(255,214,90,.34) 0deg 9deg, rgba(255,214,90,0) 9deg 22.5deg);
+  -webkit-mask: radial-gradient(closest-side, #000 18%, rgba(0,0,0,.6) 45%, transparent 72%); mask: radial-gradient(closest-side, #000 18%, rgba(0,0,0,.6) 45%, transparent 72%); }
+.results .resGlow { border-radius: 50%; opacity: 0; pointer-events: none; background: radial-gradient(closest-side, rgba(255,226,130,.75), rgba(255,190,60,.25) 50%, rgba(255,190,60,0)); }
+.results.win.go .rays { animation: raysIn .6s ease .15s forwards, spin 24s linear infinite; }
+.results.win.go .resGlow { animation: raysIn .5s ease .1s forwards, glowP 1.8s ease-in-out .6s infinite; }
+@keyframes raysIn { to { opacity: 1; } }
+@keyframes glowP { 50% { transform: scale(1.12); opacity: .75; } }
+.results.go .plaque { animation: plaqueIn .6s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes plaqueIn { 0% { transform: scale(.2) rotate(-10deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1) rotate(0); } }
+.results.lose.go .plaque { animation: plaqueDrop .55s cubic-bezier(.5,0,.75,0) both, thud .3s ease .55s; }
+@keyframes plaqueDrop { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes thud { 30% { transform: translateY(calc(5px * var(--s))) scaleY(.94); } 60% { transform: translateY(calc(-2px * var(--s))); } }
+.plaque .pShine { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); overflow: hidden; pointer-events: none;
+  -webkit-mask: url(art/sprites/plaque_victory.png) center / contain no-repeat; mask: url(art/sprites/plaque_victory.png) center / contain no-repeat; }
+.results.lose .plaque .pShine { display: none; }
+.plaque .pShine::before { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; left: -50%; transform: skewX(-20deg); background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.85), rgba(255,255,255,0)); }
+.results.win.go .plaque .pShine::before { animation: pSweep 3s ease .7s infinite; }
+@keyframes pSweep { 0% { left: -50%; } 30%, 100% { left: 130%; } }
+.results .star { position: absolute; width: calc(26px * var(--s)); height: calc(26px * var(--s)); margin: calc(-13px * var(--s)) 0 0 calc(-13px * var(--s)); pointer-events: none; opacity: 0;
+  background: radial-gradient(closest-side, #fff, #ffe27a 55%, rgba(255,226,122,0)); clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }
+.results.win.go .star { animation: twinkle2 1.6s ease-in-out infinite; }
+.results .star.s1 { animation-delay: .35s !important; } .results .star.s2 { animation-delay: .9s !important; } .results .star.s3 { animation-delay: .2s !important; } .results .star.s4 { animation-delay: 1.2s !important; } .results .star.s5 { animation-delay: .6s !important; }
+@keyframes twinkle2 { 0%, 70%, 100% { opacity: 0; transform: scale(.2) rotate(0); } 35% { opacity: 1; transform: scale(1.2) rotate(45deg); } }
+.reward div { transition: transform .28s cubic-bezier(.2,1.5,.4,1), opacity .2s; }
+.reward div.pend { opacity: 0; transform: translateX(calc(40px * var(--s))); transition: none; }
+.reward b.popv { animation: popv .35s ease; display: inline-block; }
+.reward b.neg { color: #ff8a80; }
+@keyframes popv { 40% { transform: scale(1.45); color: #fff3b0; } }
+.reason, .hint { transition: opacity .3s, transform .3s; }
+.reason.pend, .hint.pend { opacity: 0; transform: translateY(calc(8px * var(--s))); transition: none; }
+.btn.popIn { animation: popIn .45s cubic-bezier(.2,1.7,.4,1); }
+@keyframes popIn { from { transform: scale(.3); opacity: 0; } }
+.results .confetti { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+.results.lose { background: radial-gradient(90% 60% at 50% 35%, #2a3b44, #0d171c); }
+.plaque .t { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); display: grid; place-items: center; font-size: calc(26px * var(--s)); padding-top: 4%; white-space: nowrap; }
+.reward { background: rgba(13,21,27,.92); border: 1px solid rgba(255,255,255,.14); border-radius: calc(16px * var(--s)); display: grid; align-content: center; gap: calc(8px * var(--s)); padding: 0 calc(16px * var(--s)); }
+.reward div { display: flex; justify-content: space-between; align-items: center; font: 800 calc(15px * var(--s)) var(--f); } .reward b { color: var(--gold); font-weight: 900; display: inline-flex; align-items: center; gap: calc(6px * var(--s)); }
+.reward .ri { height: calc(18px * var(--s)); width: auto; } .reward .gold .ri, .reward .loot .ri { height: calc(16px * var(--s)); }
+.reward .v { font-style: normal; min-width: calc(34px * var(--s)); text-align: right; font-variant-numeric: tabular-nums; }
+.reward div.loot.pend { transform: none; }   /* в строку добычи прилетает слиток: она не выезжает сбоку, только проявляется */
+.reward div.loot { color: #ffe9a0; }
+.reason { display: grid; place-items: center; font-size: calc(16px * var(--s)); text-align: center; white-space: nowrap; overflow: hidden; }
+.hint { display: grid; place-items: center; text-align: center; background: rgba(255,255,255,.1); border-radius: calc(12px * var(--s)); font: 700 calc(13px * var(--s)) var(--f); padding: 0 calc(10px * var(--s)); overflow: hidden; line-height: 1.2; }
+.clouds { pointer-events: none; } .fog { position: absolute; inset: 0; background: #f4f8fa; } .cloud { position: absolute; }
+.toast { left: 50%; top: 14%; transform: translateX(-50%); background: rgba(9,15,19,.85); border-radius: 999px; padding: 8px 16px; font: 800 14px var(--f); white-space: nowrap; }
+
+/* dev-панель: низкая шторка до 38% экрана с вкладками, сворачивается в пилюлю в углу; на десктопе колонка справа */
+#devHot { position: absolute; left: 0; top: 0; width: 64px; height: 64px; z-index: 20; }
+#fps { position: absolute; left: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 4px); font: 600 10px var(--mono); color: rgba(255,255,255,.6); pointer-events: none; z-index: 21; }
+#dev { position: fixed; inset: auto 0 0 0; height: 38%; max-height: 38%; z-index: 30; background: rgba(21,30,36,.96); border-top: 1px solid #26333c; border-radius: 14px 14px 0 0;
+  font: 12px/1.4 var(--mono); color: #e4ecf0; display: flex; flex-direction: column; -webkit-user-select: text; user-select: text; }
+#dev[hidden] { display: none; }
+@media (min-width: 900px) { #dev { inset: 0 0 0 auto; width: 400px; height: auto; max-height: none; border-radius: 0; border-left: 1px solid #26333c; border-top: 0; } }
+#dev .dHead { display: flex; align-items: center; gap: 3px; padding: 6px 4px 0 4px; border-bottom: 1px solid #26333c; flex: none; }
+#dev .dTabs { display: flex; gap: 2px; overflow-x: auto; flex: 1; scrollbar-width: none; } #dev .dTabs::-webkit-scrollbar { display: none; }
+#dev .dTabs button { flex: none; min-height: 34px; padding: 0 6px; border: 0; border-radius: 8px 8px 0 0; background: none; color: #8a99a3; font: 600 11px var(--mono); letter-spacing: -.02em; }
+#dev .dTabs button.on { background: #0e1418; color: #ffcf4a; }
+#dev .dHead .ic { flex: none; width: 30px; min-height: 30px; padding: 0; font-size: 16px; }
+#dev .dBody { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); touch-action: pan-y; }
+#dev .pane { display: none; flex-direction: column; gap: 8px; min-height: 100%; } #dev .pane.on { display: flex; }
+#dev h3 { margin: 0; font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: #8a99a3; }
+#dev .row { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+#dev button { min-height: 36px; border-radius: 10px; border: 1px solid #26333c; background: #0e1418; color: #e4ecf0; font: 600 12px var(--mono); padding: 0 12px; cursor: pointer; }
+#dev select { background: #0e1418; color: #e4ecf0; border: 1px solid #26333c; border-radius: 8px; font: 12px var(--mono); padding: 6px 8px; min-height: 32px; }
+#dev input[type=text], #dev textarea { background: #0e1418; color: #e4ecf0; border: 1px solid #26333c; border-radius: 8px; font: 12px var(--mono); padding: 6px 8px; }
+#dev textarea { width: 100%; flex: 1; min-height: 90px; resize: none; }
+#dev label { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; }
+#dev input[type=checkbox], #dev input[type=range] { accent-color: #ffcf4a; }
+#dev pre { margin: 0; white-space: pre-wrap; background: #0e1418; border-radius: 8px; padding: 8px; }
+#dev .msg { color: #8a99a3; font-size: 11px; min-height: 1em; }
+#devPill { position: fixed; right: 4px; top: calc(env(safe-area-inset-top, 0px) + 70px); z-index: 30; height: 28px; padding: 0 10px; border-radius: 14px; border: 1px solid rgba(255,255,255,.25);
+  background: rgba(10,14,18,.72); color: #ffcf4a; font: 600 11px var(--mono); }
+#devPill[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div id="app" data-screen="load">
+  <div id="stage"></div>
+  <div id="vig"></div>
+  <div id="ui"></div>
+  <div id="devHot"></div>
+  <div id="fps"></div>
+</div>
+<aside id="dev" hidden aria-label="Dev-панель">
+  <div class="dHead">
+    <div class="dTabs" role="tablist"><button data-t="match">Матч</button><button data-t="juice">Сочность</button><button data-t="atmo">Атмосфера</button><button data-t="bal">Баланс</button><button data-t="run">Прогон</button></div>
+    <button class="ic" id="dMin" aria-label="Свернуть">–</button><button class="ic" id="dClose" aria-label="Закрыть">×</button>
+  </div>
+  <div class="dBody">
+    <div class="pane" data-p="match">
+      <div class="row"><label>seed <input type="text" id="dSeed" size="10" placeholder="случайный"></label><button id="dReplay">Повтор матча</button></div>
+      <div class="row">
+        <label><input type="checkbox" id="dSkip"> пропустить поиск</label>
+        <label><input type="checkbox" id="dShort"> короткие заставки</label>
+        <label><input type="checkbox" id="dFirst"> первый матч срежиссирован</label>
+        <label><input type="checkbox" id="dSound"> звук</label>
+      </div>
+      <div class="row"><button id="dRank3">Бойцы 3-го ранга</button><span class="msg">в подготовке: свои бойцы станут 3-го ранга, недостающие типы наймутся</span></div>
+      <div class="row"><button id="dMeta">Обнулить мету</button><span class="msg" id="dSeedNow"></span></div>
+    </div>
+    <div class="pane" data-p="juice">
+      <label>сочность <input type="range" id="dJuice" min="0" max="200"> <span id="dJuiceV"></span></label>
+      <div class="row">
+        <label><input type="checkbox" id="dCoinTone"> тон монет</label>
+        <label><input type="checkbox" id="dFinisher"> добивание</label>
+        <label><input type="checkbox" id="dHull"> повреждения корпуса</label>
+        <label><input type="checkbox" id="dVolley"> залп бортом</label>
+        <label><input type="checkbox" id="dCelebrate"> празднование</label>
+        <label><input type="checkbox" id="dFinPlus"> добивание+ (зум, 0,1x)</label>
+        <label><input type="checkbox" id="dAngry"> боевой айдл</label>
+      </div>
+      <p class="msg">Тумблеры действуют сразу, залп и празднование со следующего боя.</p>
+    </div>
+    <div class="pane" data-p="atmo">
+      <div class="row">
+        <label>время <select id="dTime"><option value="auto">случайно</option><option value="day">день</option><option value="evening">вечер</option></select></label>
+        <label>погода <select id="dWeather"><option value="auto">случайно</option><option value="calm">штиль</option><option value="normal">обычно</option><option value="wind">свежий ветер</option></select></label>
+      </div>
+      <p class="msg">«Случайно» выбирает заново на каждый матч.</p>
+    </div>
+    <div class="pane" data-p="bal">
+      <h3>Решения по умолчанию</h3>
+      <div class="row" id="dFlags"></div>
+      <textarea id="dBal" spellcheck="false"></textarea>
+      <div class="row"><button id="dApply">Применить</button><button id="dReset">Сбросить</button><button id="dCopy">Скопировать настройки</button></div>
+      <div class="msg" id="dMsg"></div>
+    </div>
+    <div class="pane" data-p="run">
+      <div class="row"><button id="dRun">1000 матчей бот против бота</button></div>
+      <pre id="dOut">Доля исходов, длина матча, винрейт по картам и снежный ком от убийств в 1-м раунде.</pre>
+    </div>
+  </div>
+</aside>
+<button id="devPill" hidden>dev ▴</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="shared/events.js"></script>
+<script src="shared/balance.js"></script>
+<script src="shared/layout.js"></script>
+<script src="units/sailors.js"></script>
+<script src="ship/ship3d.js"></script>
+<script src="fx/fx.js"></script>
+<script src="fx/sound.js"></script>
+<script src="ship/field.js"></script>
+<script src="flow/sim.js"></script>
+<script src="flow/bot.js"></script>
+<script>window.TPS_BAL0 = JSON.stringify(TPS.BAL);
+try { var b = localStorage.getItem('tps-bal2'); if (b) { var o = JSON.parse(b); for (var k in o) TPS.BAL[k] = o[k]; } } catch (e) {}</script>
+<script src="flow/game.js"></script>
+<script>
+(function () {
+  'use strict';
+  var G = TPS.GAME, B = TPS.BAL, $ = function (id) { return document.getElementById(id); }, dev = $('dev');
+  var lp = null;
+  $('devHot').addEventListener('pointerdown', function () { lp = setTimeout(openDev, 2000); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (ev) { $('devHot').addEventListener(ev, function () { clearTimeout(lp); }); });
+  // вкладка и свёрнутость запоминаются между запусками
+  var tab = 'juice'; try { tab = localStorage.getItem('tps-devtab') || 'juice'; } catch (e) {}
+  function setTab(t) {
+    tab = t; try { localStorage.setItem('tps-devtab', t); } catch (e) {}
+    dev.querySelectorAll('.dTabs button').forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); });
+    dev.querySelectorAll('.pane').forEach(function (p) { p.classList.toggle('on', p.dataset.p === t); });
+  }
+  dev.querySelectorAll('.dTabs button').forEach(function (b) { b.onclick = function () { setTab(b.dataset.t); }; });
+  $('dMin').onclick = function () { dev.hidden = true; $('devPill').hidden = false; };
+  $('devPill').onclick = function () { openDev(); };
+  function openDev() {
+    dev.hidden = false; $('devPill').hidden = true; setTab(tab); var d = G.dev;
+    $('dSeed').value = d.seed == null ? '' : d.seed; $('dSkip').checked = d.skipSearch; $('dShort').checked = d.short; $('dFirst').checked = d.firstScript; $('dSound').checked = d.sound;
+    $('dJuice').value = d.juice * 100; $('dJuiceV').textContent = Math.round(d.juice * 100) + '%';
+    $('dCoinTone').checked = d.coinTone !== false; $('dFinisher').checked = d.finisher !== false; $('dHull').checked = d.hullStages !== false;
+    $('dVolley').checked = d.volley !== false; $('dCelebrate').checked = d.celebrate !== false; $('dFinPlus').checked = d.finisherPlus !== false; $('dAngry').checked = d.angry !== false;
+    $('dTime').value = d.time || 'auto'; $('dWeather').value = d.weather || 'auto';
+    $('dBal').value = JSON.stringify(stripFlags(B), null, 1);
+    $('dFlags').innerHTML = Object.keys(B.flags).map(function (k) { return '<label><input type="checkbox" data-f="' + k + '"' + (B.flags[k] ? ' checked' : '') + '> ' + k + '</label>'; }).join('');
+    $('dFlags').querySelectorAll('input').forEach(function (i) { i.onchange = function () { B.flags[i.dataset.f] = i.checked; saveBal(); }; });
+    $('dSeedNow').textContent = G.M ? 'текущий seed: ' + G.M.lastSeed : '';
+  }
+  function stripFlags(b) { var o = JSON.parse(JSON.stringify(b)); delete o.flags; return o; }
+  function saveBal() { try { localStorage.setItem('tps-bal2', JSON.stringify(B)); } catch (e) {} }
+  $('dClose').onclick = function () { dev.hidden = true; $('devPill').hidden = true; };
+  $('dSkip').onchange = function (e) { G.dev.skipSearch = e.target.checked; G.saveDev(); };
+  $('dShort').onchange = function (e) { G.dev.short = e.target.checked; G.saveDev(); };
+  $('dFirst').onchange = function (e) { G.dev.firstScript = e.target.checked; G.saveDev(); };
+  $('dSound').onchange = function (e) { G.dev.sound = e.target.checked; TPS.SFX.set(e.target.checked); G.saveDev(); };
+  $('dJuice').oninput = function (e) { G.dev.juice = e.target.value / 100; G.F.setJuice(G.dev.juice); $('dJuiceV').textContent = e.target.value + '%'; G.saveDev(); };
+  // пункты сочности: тон монет при сборе за убийства, добивание в замедлении с наездом камеры
+  $('dCoinTone').onchange = function (e) { G.dev.coinTone = e.target.checked; G.saveDev(); };
+  $('dHull').onchange = function (e) { G.dev.hullStages = e.target.checked; G.F.hullStagesOn = e.target.checked; G.saveDev(); };
+  $('dFinisher').onchange = function (e) { G.dev.finisher = e.target.checked; G.saveDev(); };
+  $('dVolley').onchange = function (e) { G.dev.volley = e.target.checked; G.saveDev(); };
+  $('dCelebrate').onchange = function (e) { G.dev.celebrate = e.target.checked; G.saveDev(); };
+  $('dFinPlus').onchange = function (e) { G.dev.finisherPlus = e.target.checked; G.saveDev(); };
+  $('dAngry').onchange = function (e) { G.dev.angry = e.target.checked; G.F.angryOn = e.target.checked; G.saveDev(); };
+  // атмосфера: применяется со следующего матча, на поле во время матча сразу
+  $('dTime').onchange = function (e) { G.dev.time = e.target.value; G.saveDev(); if (G.M && e.target.value !== 'auto') { G.F.setAtmo({ time: e.target.value }); document.getElementById('app').dataset.time = e.target.value; } };
+  $('dWeather').onchange = function (e) { G.dev.weather = e.target.value; G.saveDev(); if (G.M && e.target.value !== 'auto') { G.F.setAtmo({ weather: e.target.value }); document.getElementById('app').dataset.weather = e.target.value; } };
+  $('dSeed').onchange = function (e) { G.dev.seed = e.target.value === '' ? null : e.target.value; G.saveDev(); };
+  $('dReplay').onclick = function () { if (G.M) { G.dev.seed = G.M.lastSeed; $('dSeed').value = G.dev.seed; G.saveDev(); } dev.hidden = true; location.reload(); };
+  $('dApply').onclick = function () {
+    try { var o = JSON.parse($('dBal').value); for (var k in o) B[k] = o[k]; saveBal(); $('dMsg').textContent = 'Баланс применён. Новые числа действуют со следующего матча.'; }
+    catch (e) { $('dMsg').textContent = 'Ошибка в JSON: ' + e.message; }
+  };
+  $('dReset').onclick = function () { try { localStorage.removeItem('tps-bal2'); } catch (e) {} var o = JSON.parse(window.TPS_BAL0); for (var k in o) B[k] = o[k]; openDev(); $('dMsg').textContent = 'Баланс сброшен к значениям из shared/balance.js.'; };
+  $('dRank3').onclick = function () { var r = G.cheatRank3(); $('dSeedNow').textContent = r === 'ok' ? 'Готово: в бою сработают ульты' : 'Доступно только в подготовке'; if (r === 'ok') { dev.hidden = true; $('devPill').hidden = false; } };
+  $('dMeta').onclick = function () { G.meta.gold = 1250; G.meta.trophies = 320; G.meta.matches = 0; G.saveMeta(); location.reload(); };
+  $('dCopy').onclick = function () {
+    var txt = 'TPS settings ' + JSON.stringify({ dev: G.dev, flags: B.flags, bal: stripFlags(B) });
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { $('dMsg').textContent = 'Скопировано. Пришли строку в чат, она станет значениями по умолчанию.'; },
+      function () { $('dMsg').textContent = txt; });
+  };
+  $('dRun').onclick = function () {
+    $('dOut').textContent = 'Считаю…';
+    setTimeout(function () {
+      var t0 = performance.now(), r = TPS.BOT.runMany(1000, B), pct = function (x) { return (x / r.n * 100).toFixed(1) + '%'; };
+      var cards = Object.keys(r.cards).map(function (k) { return '  ' + k + ': ' + r.cards[k].n + ' раз, винрейт ' + (r.cards[k].win / r.cards[k].n * 100).toFixed(0) + '%'; }).join('\n');
+      $('dOut').textContent = 'Исходы: потопление ' + pct(r.sink) + ', выбитая команда ' + pct(r.wipe) + ', абордаж ' + pct(r.board) + '\n' +
+        'Корпус после 2 раундов в среднем ' + Math.round(r.hull2 * 100) + '%\nМатч около ' + Math.round(r.len) + ' с на x1, абордаж ' + r.boardSec.toFixed(1) + ' с\n' +
+        'Лидер по убийствам в 1-м раунде выигрывает ' + (r.snow.lead ? Math.round(r.snow.leadWin / r.snow.lead * 100) : 0) + '% из ' + r.snow.lead + '\n' +
+        'Добыча: победа ' + r.loot.win.toFixed(1) + ', поражение ' + r.loot.loss.toFixed(1) + '; золото всего: победа ' + r.gold.win.toFixed(0) + ', поражение ' + r.gold.loss.toFixed(0) + '\nКарты:\n' + cards +
+        '\n' + Math.round(performance.now() - t0) + ' мс';
+    }, 30);
+  };
+})();
+</script>
+</body>
+</html>
