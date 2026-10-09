@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Песочница TPS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Rubik:wght@700;800;900&display=swap">
+<style>
+/* Песочница: 3D-поле на весь экран, служебная панель шторкой снизу на телефоне и колонкой справа на десктопе. Один тёмный вид. */
+:root {
+  --chrome: #0e1418; --chrome-2: #151e24; --line: #26333c; --fg: #e4ecf0; --mute: #8a99a3; --accent: #ffcf4a; --ok: #3fd17f;
+  --f-game: "Rubik", "Arial Black", system-ui, sans-serif; --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+html { box-sizing: border-box; height: 100%; } *, *::before, *::after { box-sizing: inherit; }
+body { margin: 0; height: 100%; overflow: hidden; background: #0E8E69; color: var(--fg); font: 13px/1.4 var(--f-mono);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+#app { position: fixed; inset: 0; display: flex; }
+#stage { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+#vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(120% 90% at 50% 45%, rgba(255,255,255,.06), rgba(0,0,0,0) 55%, rgba(0,20,15,.35) 100%); }
+body[data-time="evening"] { background: #0B4A43; }
+body[data-time="evening"] #vig { background: linear-gradient(rgba(255,150,80,.16), rgba(255,150,80,0) 28%), radial-gradient(120% 90% at 50% 40%, rgba(0,0,0,0) 50%, rgba(24,8,40,.5) 100%); }
+#fps { position: absolute; left: 8px; top: calc(env(safe-area-inset-top, 0px) + 6px); font: 600 11px var(--f-mono); color: #fff; background: rgba(0,0,0,.45); padding: 3px 7px; border-radius: 8px; pointer-events: none; }
+.float { position: absolute; transform: translate(-50%, -50%); font: 900 18px var(--f-game); color: #ffd84a; -webkit-text-stroke: 4px #08090B; paint-order: stroke fill; pointer-events: none; white-space: nowrap; }
+#pill { position: fixed; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 6px); z-index: 6; height: 34px; padding: 0 12px; border-radius: 17px; border: 1px solid rgba(255,255,255,.2);
+  background: rgba(10,14,18,.75); color: var(--fg); font: 600 12px var(--f-mono); display: none; }
+#panel { width: 360px; flex: none; overflow-y: auto; background: var(--chrome-2); border-left: 1px solid var(--line); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; touch-action: pan-y; }
+#scrim { display: none; }
+@media (max-width: 899px) {
+  #pill { display: block; }
+  #panel { position: fixed; left: 0; right: 0; bottom: 0; width: auto; height: 31%; max-height: 31%; z-index: 8; border-left: 0; border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0; transform: translateY(105%); transition: transform .2s ease; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  #panel.open { transform: none; }
+  /* шторка открыта: поле ужимается в верхние 69%, камера кадрирует корабли над шторкой, поле остаётся живым */
+  body.sheet #app { bottom: 31%; }
+}
+@media (prefers-reduced-motion: reduce) { #panel { transition: none; } }
+h2 { margin: 2px 0 0; font: 600 10px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.grid button, .row button { min-height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--chrome); color: var(--fg); font: 600 12px var(--f-mono); cursor: pointer; padding: 4px; }
+.grid button:active, .row button:active { transform: translateY(1px); background: #1b262d; }
+.grid button.on { background: var(--accent); color: #1a2126; border-color: var(--accent); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sl { display: grid; grid-template-columns: 110px 1fr 46px; gap: 8px; align-items: center; }
+.sl input { width: 100%; accent-color: var(--accent); }
+.sl span:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.note { margin: 0; color: var(--mute); font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <main id="stage" aria-label="3D-поле">
+    <div id="vig"></div>
+    <div id="fps">FPS</div>
+  </main>
+  <div id="scrim"></div>
+  <aside id="panel" aria-label="Песочница">
+    <p class="note">Тап по своей пустой клетке нанимает матроса, по матросу запускает его действие. Матроса можно перетащить: на такого же он сливается, на другого меняется местами.</p>
+    <h2>Подготовка</h2>
+    <div class="grid">
+      <button data-a="hire">Найм</button><button data-a="pair">Мерж пары</button><button data-a="triple">Тройка</button>
+      <button data-a="reroll">Reroll</button><button data-a="keg">Бочка</button><button data-a="land">Найм всем</button>
+    </div>
+    <h2>Бой</h2>
+    <div class="grid">
+      <button data-a="pass">Заход</button><button data-a="volley">Залп</button><button data-a="evolley">Залп врага</button>
+      <button data-a="miss">Промах</button><button data-a="muskets">Мушкеты</button><button data-a="death">Смерть</button><button data-a="collect">Сбор монет</button>
+      <button data-a="smoke">Пушка дымит</button><button data-a="broken">Пушка сломана</button><button data-a="turn">Разворот</button>
+    </div>
+    <h2>Финал</h2>
+    <div class="grid">
+      <button data-a="board">Абордаж</button><button data-a="slash">Удары</button><button data-a="sink">Потопление</button>
+      <button data-a="finish">Добивание</button><button data-a="broadside">Залп бортом</button><button data-a="celebrate">Празднование</button><button data-a="ultG">Ульта канонира</button><button data-a="ultS">Ульта стрелка</button><button data-a="ultB">Ульта абордажника</button>
+    </div>
+    <h2>Карты абордажа</h2>
+    <div class="grid">
+      <button data-a="kCurse">Проклятие</button><button data-a="kStorm">Шторм</button><button data-a="kHealer">Знахарь</button>
+      <button data-a="kPowder">Порох</button><button data-a="kRum">Ром ярости</button><button data-a="kBubble">Пузырь</button>
+    </div>
+    <h2>Атмосфера</h2>
+    <div class="grid">
+      <button data-a="tDay">День</button><button data-a="tEve">Вечер</button><button data-a="flashes">Вспышки</button><button data-a="hullDmg">Повреждения</button>
+      <button data-a="wCalm">Штиль</button><button data-a="wNormal">Обычно</button><button data-a="wWind">Свежий ветер</button>
+    </div>
+    <h2>Камера</h2>
+    <div class="grid">
+      <button data-a="fprep" class="on">Подготовка</button><button data-a="fbattle">Бой</button><button data-a="fboard">Абордаж</button>
+      <button data-a="enter">Вход</button><button data-a="x2">x2</button><button data-a="reset">Сброс</button>
+    </div>
+    <h2>Настройки</h2>
+    <label class="sl"><span>Сочность</span><input type="range" id="sJuice" min="0" max="200" value="150"><span id="vJuice">150%</span></label>
+    <label class="sl"><span>Наклон камеры</span><input type="range" id="sTilt" min="10" max="60" value="45"><span id="vTilt">45°</span></label>
+    <label class="sl"><span>Качка</span><input type="range" id="sRock" min="0" max="80" value="50"><span id="vRock">5,0°</span></label>
+    <label class="sl"><span>Клетка</span><input type="range" id="sCell" min="48" max="56" value="56"><span id="vCell">56</span></label>
+    <div class="row"><button id="bCopy">Скопировать настройки</button><button id="bSound">Звук: вкл</button></div>
+    <p class="note" id="info"></p>
+  </aside>
+</div>
+<button id="pill">≡ эффекты</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="shared/events.js"></script>
+<script src="shared/balance.js"></script>
+<script src="shared/layout.js"></script>
+<script src="units/sailors.js"></script>
+<script src="ship/ship3d.js"></script>
+<script src="fx/fx.js"></script>
+<script src="fx/sound.js"></script>
+<script src="ship/field.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var stage = $('stage'), panel = $('panel'), scrim = $('scrim');
+  var F = TPS.FIELD.create(stage, {}), THREE = window.THREE, SFX = TPS.SFX;
+  var TYPES = ['gunner', 'shooter', 'boarder'];
+  var settings = { juice: 1.5, tilt: 45, rock: 5, cell: 56, time: 'day', weather: 'normal' };
+  try { var sv = JSON.parse(localStorage.getItem('tps-sbx2') || '{}'); for (var k in sv) settings[k] = sv[k]; } catch (e) {}
+  function saveS() { try { localStorage.setItem('tps-sbx2', JSON.stringify(settings)); } catch (e) {} }
+
+  // ---------- состояние сцены ----------
+  function setup() {
+    F.clearSide('p'); F.clearSide('e'); F.clearDecals(); F.showHp(false);
+    ['p', 'e'].forEach(function (s) { F.ships[s].unsink(); F.ships[s].travel = 0; F.ships[s].cannons.forEach(function (cn) { F.ships[s].setCannon(cn, 'ok'); }); });
+    F.ships.p.setYaw(0); F.ships.e.setYaw(Math.PI);
+    [3, 5, 10].forEach(function (c) { F.setKeg('p', c, true); });
+    [2, 7, 11].forEach(function (c) { F.setKeg('e', c, true); });
+    F.placeUnit('p', 0, 'gunner', 1); F.placeUnit('p', 6, 'gunner', 1); F.placeUnit('p', 9, 'boarder', 1); F.placeUnit('p', 1, 'shooter', 1);
+    F.placeUnit('e', 1, 'shooter', 2); F.placeUnit('e', 4, 'boarder', 1); F.placeUnit('e', 10, 'gunner', 1); F.placeUnit('e', 8, 'boarder', 2);
+  }
+  function applySettings() {
+    F.setJuice(settings.juice); F.tilt = settings.tilt * Math.PI / 180;
+    F.rockBase = settings.rock; F.setAtmo({ time: settings.time, weather: settings.weather }); markAtmo();
+    TPS.LAYOUT.C.CELL_PREP = settings.cell; F.setFrame(F.frameName || 'prep', true);
+    $('sJuice').value = settings.juice * 100; $('vJuice').textContent = Math.round(settings.juice * 100) + '%';
+    $('sTilt').value = settings.tilt; $('vTilt').textContent = settings.tilt + '°';
+    $('sRock').value = settings.rock * 10; $('vRock').textContent = settings.rock.toFixed(1).replace('.', ',') + '°';
+    $('sCell').value = settings.cell; $('vCell').textContent = settings.cell;
+  }
+
+  // ---------- мелочи ----------
+  function floatText(text, world, color) {
+    var p = F.toScreen(world), d = document.createElement('div'); d.className = 'float'; d.textContent = text;
+    if (color) d.style.color = color; d.style.left = p.x + 'px'; d.style.top = p.y + 'px'; stage.appendChild(d);
+    var t0 = performance.now();
+    (function step() { var u = (performance.now() - t0) / 800; d.style.transform = 'translate(-50%,' + (-50 - 60 * u) + '%) scale(' + (1 + 0.2 * Math.sin(Math.min(u * 4, 1) * Math.PI)) + ')'; d.style.opacity = 1 - Math.max(0, u - 0.6) / 0.4;
+      if (u < 1) requestAnimationFrame(step); else d.remove(); })();
+  }
+  function free(side) { var out = []; for (var c = 0; c < 12; c++) if (!F.units[side][c] && !F.ships[side].kegs[c]) out.push(c); return out; }
+  function unitsOf(side, filter) { return Object.keys(F.units[side]).map(Number).filter(function (c) { return !filter || filter(F.units[side][c]); }); }
+  function pickOne(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function neighbors(c) { var r = Math.floor(c / 4), k = c % 4, o = []; if (k > 0) o.push(c - 1); if (k < 3) o.push(c + 1); if (r > 0) o.push(c - 4); if (r < 2) o.push(c + 4); return o; }
+  function later(ms, fn) { setTimeout(fn, ms / F.timeScale); }
+
+  function hire(cell, type) {
+    var c = cell != null ? cell : pickOne(free('p')); if (c == null) { SFX.deny(); return; }
+    SFX.hire(); F.placeUnit('p', c, type || pickOne(TYPES), 1, { land: true });
+    later(330, function () { F.fx.dust(F.worldOf('p', c, 0.05), 3); });
+  }
+  function mergeInto(side, fromCell, toCell, triple) {
+    var tu = F.units[side][toCell]; if (!tu) return;
+    F.removeUnit(side, fromCell, { silent: true });
+    var nr = Math.min(3, tu.rank + (triple ? 2 : 1)); F.setRank(side, toCell, nr);
+    var wp = F.worldOf(side, toCell, 0.1);
+    F.fx.sparkle(wp, nr >= 3); F.mergeBurst(side, toCell, triple || nr >= 3); SFX.merge(triple || nr >= 3); F.shake(triple ? 5 : 2); F.hitstop(triple ? 120 : 60);
+    F.kits[side].land(tu.S);
+    neighbors(toCell).forEach(function (n) { if (F.ships[side].kegs[n]) breakKeg(side, n); });
+  }
+  function breakKeg(side, c) {
+    var wp = F.worldOf(side, c, 0.2); F.setKeg(side, c, false); F.fx.splinters(wp); F.fx.coins(wp, 3); SFX.keg(); floatText('+10', wp);
+  }
+
+  // ---------- кнопки ----------
+  var ACT = {
+    hire: function () { hire(); },
+    land: function () { unitsOf('p').forEach(function (c, i) { later(i * 120, function () { var u = F.units.p[c]; if (u) F.kits.p.land(u.S); }); }); },
+    pair: function () {
+      var us = unitsOf('p', function (u) { return u.rank < 3; }), found = null;
+      us.forEach(function (a) { us.forEach(function (b) { var A = F.units.p[a], B = F.units.p[b]; if (!found && a !== b && A.type === B.type && A.rank === B.rank) found = [a, b]; }); });
+      if (!found) { var fr = free('p'); if (fr.length < 2) { SFX.deny(); return; } hire(fr[0], 'shooter'); later(500, function () { hire(fr[1], 'shooter'); }); later(1400, ACT.pair); return; }
+      mergeInto('p', found[0], found[1], false);
+    },
+    triple: function () {
+      var row = [0, 1, 2]; row.forEach(function (c) { F.removeUnit('p', c, { silent: true }); F.setKeg('p', c, false); });
+      row.forEach(function (c, i) { later(i * 180, function () { hire(c, 'boarder'); }); });
+      later(1300, function () { mergeInto('p', 0, 1, true); F.removeUnit('p', 2, { silent: true }); });
+    },
+    reroll: function () {
+      var c = pickOne(unitsOf('p', function (u) { return u.rank < 3; })); if (c == null) { SFX.deny(); return; }
+      var u = F.units.p[c], nt = pickOne(TYPES.filter(function (t) { return t !== u.type; }));
+      SFX.reroll(); var wp = F.worldOf('p', c, 0.4); F.fx.sparkle(wp, false); F.fx.cloth(wp, 'blue');
+      later(180, function () { var r = u.rank; F.placeUnit('p', c, nt, r, { land: true }); });
+    },
+    keg: function () { var ks = Object.keys(F.ships.p.kegs).map(Number); if (!ks.length) { SFX.deny(); return; } breakKeg('p', pickOne(ks)); },
+    volley: function () { [0, 1, 2].forEach(function (j) { later(j * 160, function () { F.fire('p', 0, j, {}); }); }); },
+    evolley: function () { [0, 1, 2].forEach(function (j) { later(j * 160, function () { F.fire('e', 0, j, {}); }); }); },
+    miss: function () { F.fire('p', 0, 1, { miss: true }); },
+    muskets: function () {
+      var sh = unitsOf('p', function (u) { return u.type === 'shooter'; }); if (!sh.length) { hire(null, 'shooter'); return; }
+      F.showHp(true);
+      sh.forEach(function (c, i) { later(i * 200, function () {
+        var u = F.units.p[c]; if (!u) return; var t = pickOne(unitsOf('e')); if (t == null) return; F.aimShooter('p', c); later(300, function () { if (!F.units.p[c]) return; F.musket('p', c, 'e', t); }); later(550, function () {
+          var tu = F.units.e[t]; if (!tu) return; F.kits.e.hit(tu.S);
+          tu.hpv = (tu.hpv == null ? 1 : tu.hpv) - 0.35; F.setHp('e', t, Math.max(0, tu.hpv));
+          if (tu.hpv <= 0) ACT.death(t);
+        });
+      }); });
+    },
+    death: function (cell) {
+      var c = typeof cell === 'number' ? cell : pickOne(unitsOf('e')); if (c == null) return;
+      var u = F.units.e[c], wp = F.worldOf('e', c, 0.1);
+      F.removeUnit('e', c, { death: true }); F.dropCoins('e', c, u.rank + 1, [2, 4, 8][u.rank - 1]); F.shake(3); F.hitstop(50);
+    },
+    // карты абордажа: каждая кнопка показывает свой эффект на живых бойцах
+    kCurse: function () {
+      unitsOf('e').slice(0, 3).forEach(function (c, i) { later(i * 200, function () {
+        var u = F.units.e[c]; if (!u) return; u.st = Math.min(3, (u.st || 0) + 1); F.setCurse('e', c, u.st); SFX.hook();
+        [1, 2, 3].forEach(function (k) { later(k * 1000, function () { if (!F.units.e[c]) return; F.fx.curse(F.worldOf('e', c, 0.1), false); floatText('-' + 5 * u.st, F.worldOf('e', c, 0.9), '#7dff9b'); F.kits.e.hit(F.units.e[c].S); }); });
+        later(4200, function () { if (F.units.e[c]) { F.units.e[c].st = 0; F.setCurse('e', c, 0); } });
+      }); });
+    },
+    kStorm: function () {
+      var cs = unitsOf('e'); if (cs.length < 2) return;
+      var p0 = unitsOf('p')[0]; if (p0 != null) F.bolt('p', p0, 'e', cs[0]);
+      cs.slice(0, 4).forEach(function (c, i) { if (i) later(i * 70, function () { F.bolt('e', cs[i - 1], 'e', c); SFX.hit(); }); });
+    },
+    kHealer: function () { unitsOf('p').forEach(function (c, i) { later(i * 250, function () { F.healAt('p', c); floatText('+12', F.worldOf('p', c, 0.9), '#7dff9b'); SFX.coin(); }); }); },
+    kPowder: function () {
+      var c = pickOne(unitsOf('e')); if (c == null) return;
+      F.removeUnit('e', c, { death: true }); later(150, function () { F.blastAt('e', c); SFX.boom(); unitsOf('e').forEach(function (n) { if (F.units.e[n]) F.kits.e.hit(F.units.e[n].S); }); });
+    },
+    kRum: function () { unitsOf('p').forEach(function (c) { F.setRage('p', c, 3); var u = F.units.p[c]; F.kits.p.act(u.S); }); SFX.merge(true); },
+    kBubble: function () {
+      unitsOf('p').forEach(function (c) { F.setBubble('p', c, 2); });
+      unitsOf('p').forEach(function (c, i) { later(1200 + i * 300, function () { F.popBubble('p', c, 1); SFX.splash(); }); later(2400 + i * 300, function () { F.popBubble('p', c, 0); SFX.splash(); }); });
+    },
+    // монеты с палуб летят в левый верхний угол, как в счётчик
+    collect: function () {
+      var chain = 0;   // тон монет: каждая следующая на полтона выше, до октавы
+      F.piles.slice().forEach(function (pile, k) { setTimeout(function () {
+        F.takePile(pile).forEach(function (pt, i) {
+          var c = document.createElement('img'); c.src = 'art/sprites/ic_doubloon.png';
+          c.style.cssText = 'position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;z-index:5;transition:transform .45s cubic-bezier(.5,0,.8,.4);left:' + pt.x + 'px;top:' + pt.y + 'px';
+          document.body.appendChild(c);
+          setTimeout(function () { c.style.transform = 'translate(' + (24 - pt.x) + 'px,' + (24 - pt.y) + 'px) scale(.8)'; }, 30 + i * 45);
+          setTimeout(function () { c.remove(); SFX.coinUp(chain++); }, 520 + i * 45);
+        });
+      }, k * 160); });
+    },
+    smoke: function () { F.cannonState('e', 0, 0, 'smoking'); },
+    broken: function () { F.cannonState('e', 0, 2, 'broken'); F.fx.splinters(F.muzzleWorld(F.ships.e.cannon(0, 2))); SFX.hit(); },
+    turn: function () { F.ships.p.turn(); F.ships.e.turn(); SFX.banner(); },
+    pass: function () {
+      setFrame('battle'); F.showHp(true);
+      var t0 = performance.now(), D = 4000;
+      (function step() {
+        var u = Math.min(1, (performance.now() - t0) * F.timeScale / D);
+        F.ships.p.travel = -1.6 + 3.2 * u; F.ships.e.travel = 1.6 - 3.2 * u;
+        if (u < 1) requestAnimationFrame(step);
+      })();
+      [400, 900, 1500, 2100, 2600, 3200].forEach(function (ms, i) { later(ms, function () { F.fire(i % 2 ? 'e' : 'p', 0, i % 3, { miss: i === 4 }); }); });
+      later(1200, ACT.muskets);
+    },
+    board: function () {
+      setFrame('board'); SFX.hook();
+      [0.25, 0.5, 0.75].forEach(function (t, i) { later(i * 120, function () {
+        var a = F.ships.p.deck.localToWorld(new THREE.Vector3(F.ships.p.gx0 + 4 * t, 0.2, -1.6)), b = F.ships.e.deck.localToWorld(new THREE.Vector3(F.ships.e.gx0 + 4 * t, 0.2, -1.6));
+        F.fx.hook(a, b, 0.45);
+      }); });
+      later(700, function () { F.shake(4); SFX.land(); });
+      later(780, function () { if (!F.boardMode) F.boardJump('p', 'e'); });
+    },
+    slash: function () {
+      unitsOf('p').forEach(function (c, i) { later(i * 140, function () { var u = F.units.p[c]; if (!u) return; F.kits.p.act(u.S); if (u.type === 'boarder') later(260, SFX.slash); }); });
+      unitsOf('e').forEach(function (c, i) { later(300 + i * 160, function () { var u = F.units.e[c]; if (u) F.kits.e.hit(u.S); SFX.hit(); }); });
+    },
+    sink: function () {
+      F.ships.e.sink(); SFX.sink(); F.shake(10); F.hitstop(200);
+      for (var i = 0; i < 6; i++) later(i * 260, function () { var p = F.ships.e.root.position.clone(); p.x += (Math.random() - 0.5) * 4; p.z += (Math.random() - 0.5) * 2; p.y = -0.38; F.fx.splash(p); });
+      F.finisher(F.ships.e.root.position.clone(), { sink: true });   // в игре потопление всегда финал матча: замедление и наезд на тонущий корабль
+    },
+    // добивание: свой боец бьёт живого врага, тот погибает, после хит-стопа замедление 0,25x и наезд камеры к месту смерти
+    finish: function () {
+      var delay = 0;
+      if (F.frameName === 'prep') { setFrame('battle'); delay = 700; }
+      if (!unitsOf('e').length) {   // команда врага выбита: высаживаем новую и добиваем, когда встанет
+        free('e').slice(0, 4).forEach(function (c, i) { F.placeUnit('e', c, TYPES[i % 3], 1, { land: true }); });
+        F.showHp(F.frameName !== 'prep'); delay = Math.max(delay, 900);
+      }
+      later(delay, function () {
+        var c = pickOne(unitsOf('e')); if (c == null) return;
+        var sh = unitsOf('p', function (u) { return u.type === 'shooter'; }), a = sh.length ? sh[0] : unitsOf('p')[0];
+        if (a != null) {
+          if (F.units.p[a].type === 'shooter') F.musket('p', a, 'e', c);
+          else { F.aimUnit('p', a, F.worldOf('e', c, 0.3), 0.8); F.kits.p.act(F.units.p[a].S); later(250, SFX.slash); }
+        }
+        later(a != null ? 300 : 0, function () {
+          var u = F.units.e[c]; if (!u) return;
+          var wp = F.worldOf('e', c, 0.3);
+          F.removeUnit('e', c, { death: true }); F.dropCoins('e', c, u.rank + 1, [2, 4, 8][u.rank - 1]); F.shake(3); F.hitstop(50);
+          F.finisher(wp);
+        });
+      });
+    },
+    // залп бортом: три выстрела одной волной, как первые выстрелы захода в игре
+    broadside: function () {
+      if (F.frameName === 'prep') setFrame('battle');
+      [0, 1, 2].forEach(function (j) { later(j * 300, function () { F.fire('p', 0, j, { volley: { i: j, n: 3, last: j === 2 } }); }); });
+    },
+    // празднование победителей: прыжки, салют живыми пушками, «ура»
+    celebrate: function () { F.celebrate('p', 2.4); F.salute('p'); later(150, SFX.cheer); },
+    // ульты 3-го ранга: те же функции, что в игре, без симуляции
+    ultG: function () { if (F.frameName === 'prep') setFrame('battle'); F.ultSlow(0.65, 0.3); F.giantBall('p', 0, 1, 1.2); },
+    ultS: function () {
+      if (F.frameName === 'prep') setFrame('battle');
+      var sh = unitsOf('p', function (u) { return u.type === 'shooter'; }); if (!sh.length) { hire(null, 'shooter'); return; }
+      var row = unitsOf('e').filter(function (c) { return c < 4; }); if (!row.length) row = unitsOf('e'); if (!row.length) return;
+      F.ultSlow(0.65, 0.3); F.pierce('p', sh[0], row.map(function (c) { return { cell: c }; }), function () { row.forEach(function (c) { var u = F.units.e[c]; if (u) F.kits.e.hit(u.S); }); });
+    },
+    ultB: function () {
+      if (F.frameName === 'prep') setFrame('battle');
+      var bo = unitsOf('p', function (u) { return u.type === 'boarder'; }); if (!bo.length) { hire(null, 'boarder'); return; }
+      var row = unitsOf('e').filter(function (c) { return c < 4; }); if (!row.length) row = unitsOf('e'); if (!row.length) return;
+      F.ultSlow(0.65, 0.3); F.ropeLeap('p', bo[0], row.map(function (c) { return { cell: c }; }), 0.8);
+    },
+    fprep: function () { setFrame('prep'); }, fbattle: function () { setFrame('battle'); }, fboard: function () { setFrame('board'); },
+    enter: function () {
+      setFrame('prep', true); var t0 = performance.now();
+      (function step() {
+        var t = (performance.now() - t0) * F.timeScale, z = Math.min(1, Math.max(0, (t - 300) / 2000)), e = z < 0.5 ? 4 * z * z * z : 1 - Math.pow(-2 * z + 2, 3) / 2;
+        var tr = Math.min(1, t / 2300), dx = 5.5 * (1 - (1 - Math.pow(1 - tr, 3)));
+        F.zoom = { k: 0.3 + 0.7 * e, dx: dx, v: tr < 1 ? 1 : 0 }; F.enterClouds(Math.min(1, t / 1500));
+        if (t < 2300) requestAnimationFrame(step); else { F.zoom = null; F.enterClouds(1); SFX.banner(); }
+      })();
+    },
+    tDay: function () { settings.time = 'day'; applySettings(); saveS(); },
+    tEve: function () { settings.time = 'evening'; applySettings(); saveS(); },
+    wCalm: function () { settings.weather = 'calm'; applySettings(); saveS(); },
+    wNormal: function () { settings.weather = 'normal'; applySettings(); saveS(); },
+    wWind: function () { settings.weather = 'wind'; applySettings(); saveS(); },
+    // проверка всполохов: залпы обоих бортов и пороховой взрыв на палубе врага
+    flashes: function () {
+      setFrame('battle');
+      [0, 1, 2].forEach(function (j) { later(j * 220, function () { F.fire('p', 0, j, {}); }); later(380 + j * 220, function () { F.fire('e', 0, j, { miss: j === 1 }); }); });
+      later(1300, function () { var c = pickOne(unitsOf('e')); if (c == null) return; F.removeUnit('e', c, { death: true }); later(150, function () { F.blastAt('e', c); SFX.boom(); }); });
+    },
+    // стадии повреждения: 100% -> 40% (дым) -> 20% (огонь, крен) -> 100%
+    hullDmg: function (b) { var st = [1, 0.4, 0.2], i = ((ACT._hd || 0) + 1) % 3; ACT._hd = i; ['p', 'e'].forEach(function (sd) { F.setHullDamage(sd, st[i]); }); b.textContent = 'Повреждения ' + Math.round(st[i] * 100) + '%'; },
+    x2: function (b) { F.timeScale = F.timeScale === 1 ? 2 : 1; b.classList.toggle('on', F.timeScale === 2); },
+    reset: function () { F.zoom = null; F.finisher(null); F.celebrate(null); setup(); setFrame('prep'); }
+  };
+  function markAtmo() {
+    [['tDay', settings.time === 'day'], ['tEve', settings.time === 'evening'], ['wCalm', settings.weather === 'calm'], ['wNormal', settings.weather === 'normal'], ['wWind', settings.weather === 'wind']].forEach(function (q) {
+      var b = document.querySelector('[data-a="' + q[0] + '"]'); if (b) b.classList.toggle('on', q[1]); });
+    document.body.dataset.time = settings.time;
+  }
+  function setFrame(n, instant) {
+    F.setFrame(n, instant); F.ships.p.travel = 0; F.ships.e.travel = 0;
+    ['fprep', 'fbattle', 'fboard'].forEach(function (k) { var b = document.querySelector('[data-a="' + k + '"]'); b.classList.toggle('on', k === 'f' + n); });
+    F.showHp(n !== 'prep');
+  }
+  document.querySelectorAll('[data-a]').forEach(function (b) {
+    b.addEventListener('click', function () { SFX.init(); SFX.tap(); ACT[b.dataset.a](b); });
+  });
+
+  // ---------- касания поля: найм, действие, перетаскивание ----------
+  var drag = null;
+  stage.addEventListener('pointerdown', function (e) {
+    SFX.init();
+    var hit = F.pick(e.clientX, e.clientY); if (!hit) return;
+    drag = { hit: hit, x0: e.clientX, y0: e.clientY, moved: false, u: hit.side === 'p' ? F.units.p[hit.cell] : null };
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', function (e) {
+    if (!drag || !drag.u) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
+    if (!drag.moved) { drag.moved = true; drag.u.S.lift = 0.35; drag.u.S.root.scale.multiplyScalar(1.15); drag.u.badge.visible = false; SFX.press(); }
+    var lp = F.groundAt(e.clientX, e.clientY - 30, 'p'), c = F.ships.p.cellAt(lp), S = drag.u.S;
+    var nx = lp.x, nz = lp.z;
+    if (c >= 0) { var cp = F.ships.p.cellPos(c); if (Math.hypot(cp.x - lp.x, cp.z - lp.z) < 0.25) { nx = cp.x; nz = cp.z; if (drag.snap !== c) { drag.snap = c; SFX.tap(); } } }
+    S.sway = Math.max(-0.5, Math.min(0.5, (nx - S.x) * -2)); S.x = nx; S.z = nz;
+  });
+  stage.addEventListener('pointerup', function (e) {
+    if (!drag) return; var d = drag; drag = null;
+    if (!d.moved) {
+      if (d.hit.side === 'p') { if (d.u) F.kits.p.act(d.u.S); else if (!F.ships.p.kegs[d.hit.cell]) hire(d.hit.cell); else breakKeg('p', d.hit.cell); }
+      else { var eu = F.units.e[d.hit.cell]; if (eu) F.kits.e.act(eu.S); }
+      return;
+    }
+    var u = d.u, S = u.S; S.lift = 0; S.sway = 0; u.badge.visible = true; var r0 = 1 + 0.12 * (u.rank - 1); S.root.scale.setScalar(r0);
+    var lp = F.groundAt(e.clientX, e.clientY - 30, 'p'), c = F.ships.p.cellAt(lp), from = u.cell;
+    function back() { var p = F.ships.p.cellPos(from); S.x = p.x; S.z = p.z; SFX.deny(); }
+    if (c < 0 || c === from || F.ships.p.kegs[c]) { back(); return; }
+    var t = F.units.p[c];
+    if (t && t.type === u.type && t.rank === u.rank && u.rank < 3) { mergeInto('p', from, c, false); return; }
+    F.moveUnit('p', from, c); F.kits.p.land(S); SFX.land();
+  });
+
+  // ---------- настройки ----------
+  $('sJuice').addEventListener('input', function (e) { settings.juice = e.target.value / 100; applySettings(); saveS(); });
+  $('sTilt').addEventListener('input', function (e) { settings.tilt = +e.target.value; applySettings(); saveS(); });
+  $('sRock').addEventListener('input', function (e) { settings.rock = e.target.value / 10; applySettings(); saveS(); });
+  $('sCell').addEventListener('input', function (e) { settings.cell = +e.target.value; applySettings(); saveS(); });
+  $('bCopy').addEventListener('click', function () {
+    var txt = 'TPS sandbox ' + JSON.stringify(settings);
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { $('bCopy').textContent = 'Скопировано'; }, function () { $('info').textContent = txt; });
+    setTimeout(function () { $('bCopy').textContent = 'Скопировать настройки'; }, 1500);
+  });
+  var soundOn = true;
+  $('bSound').addEventListener('click', function () { soundOn = !soundOn; SFX.set(soundOn); $('bSound').textContent = 'Звук: ' + (soundOn ? 'вкл' : 'выкл'); });
+  // пилюля открывает и закрывает шторку; поле под ней пересчитывает кадр
+  function sheet(on) { panel.classList.toggle('open', on); document.body.classList.toggle('sheet', on); $('pill').textContent = on ? '× эффекты' : '≡ эффекты'; F.resize(); }
+  $('pill').addEventListener('click', function () { sheet(!panel.classList.contains('open')); });
+
+  // ---------- цикл ----------
+  var last = performance.now(), frames = 0, acc = 0;
+  window.addEventListener('resize', function () { F.resize(); });
+  function loop(now) {
+    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    F.update(dt);
+    frames++; acc += dt;
+    if (acc > 0.5) { $('fps').textContent = Math.round(frames / acc) + ' FPS · ' + F.fx.count() + ' частиц'; frames = 0; acc = 0; }
+    requestAnimationFrame(loop);
+  }
+  setup(); applySettings();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { setup(); });
+  requestAnimationFrame(loop);
+  window.TPS_SANDBOX = { F: F, ACT: ACT };
+})();
+</script>
+</body>
+</html>

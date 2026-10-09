@@ -142,8 +142,12 @@
   }
   function setReadyLbl(t) { var l = H.ready.querySelector('.lbl'); l.classList.remove('word'); l.textContent = t; }
   function wiggle(node) { node.classList.remove('no'); void node.offsetWidth; node.classList.add('no'); }
+  // счётчик раундов: в 1-м и 2-м после «/3» сабли, третий раунд это абордаж; в 3-м надпись «Абордаж»
+  function setRoundLbl(round) {
+    H.round.innerHTML = round < 3 ? 'Round ' + round + '/3 <img class="rsab" src="art/sprites/ic_tab_battle.svg" alt="">' : '<img class="rsab" src="art/sprites/ic_tab_battle.svg" alt=""> Абордаж';
+  }
   function banner(text, ms, big) {
-    H.banner.hidden = false; H.banner.querySelector ? null : 0; H.banner.textContent = text; H.banner.classList.toggle('big', !!big);
+    H.banner.hidden = false; H.banner.textContent = text; H.banner.classList.toggle('big', !!big); H.banner.classList.toggle('board', big === 'board');
     H.banner.classList.remove('in'); void H.banner.offsetWidth; H.banner.classList.add('in'); SFX.banner();
     return wait(ms || 900).then(function () { H.banner.hidden = true; });
   }
@@ -541,6 +545,22 @@
   // ---------- ввод: найм, перетаскивание, Reroll, тройки ----------
   var drag = null;
   function inRect(node, x, y) { var r = node.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
+  // зона Reroll шире кнопки: по 28 pt с боков, 64 pt сверху и до низа экрана, чтобы бросок «в сторону кнопки» засчитывался
+  function rrRect() { var r = H.hire.getBoundingClientRect(), k = s(); return { left: r.left - 28 * k, right: r.right + 28 * k, top: r.top - 64 * k, bottom: Math.max(r.bottom + 24 * k, innerHeight) }; }
+  function inReroll(x, y) { var r = rrRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
+  function placeRrZone(on) {
+    if (!H.rrZone) { H.rrZone = el('rrZone', ui, ''); ui.insertBefore(H.rrZone, H.bot); }   // под кнопками, чтобы не тонировать их
+    H.rrZone.hidden = !on; if (!on) return;
+    var r = rrRect(), u = ui.getBoundingClientRect();
+    H.rrZone.style.left = (r.left - u.left) + 'px'; H.rrZone.style.top = (r.top - u.top) + 'px'; H.rrZone.style.width = (r.right - r.left) + 'px'; H.rrZone.style.height = (Math.min(r.bottom, u.bottom) - r.top) + 'px';
+  }
+  // плавное следование бойца за пальцем и обмен: занятая клетка сдвигает своего бойца навстречу, показывая обмен
+  function tickDrag() {
+    if (!drag || !drag.moved || drag.tx == null) return;
+    var S = drag.u.S; S.x += (drag.tx - S.x) * 0.38; S.z += (drag.tz - S.z) * 0.38;
+    if (drag.swapU) { var su = drag.swapU, h = su.home, o = F.ships.p.cellPos(drag.from); su.S.x += (h.x + (o.x - h.x) * 0.35 - su.S.x) * 0.3; su.S.z += (h.z + (o.z - h.z) * 0.35 - su.S.z) * 0.3; }
+  }
+  function releaseSwap(d) { if (d && d.swapU) { var su = d.swapU; if (F.units.p[su.cell] === su.u) { var h = F.ships.p.cellPos(su.cell); su.S.x = h.x; su.S.z = h.z; } d.swapU = null; } }
   stage.addEventListener('pointerdown', function (e) {
     SFX.init(); lastInput = performance.now(); if (hand) { hand.n.remove(); hand = null; }
     if (!M || phase !== 'prep' || M.sides[0].ready) return;
@@ -556,14 +576,21 @@
     if (!drag) return;
     if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
     var S = drag.u.S;
-    if (!drag.moved) { drag.moved = true; S.lift = 0.35; S.root.scale.multiplyScalar(1.15); drag.u.badge.visible = false; SFX.press(); H.hire.classList.add('reroll'); setRerollPrice(); }
+    if (!drag.moved) { drag.moved = true; S.lift = 0.35; S.root.scale.multiplyScalar(1.15); drag.u.badge.visible = false; SFX.press(); H.hire.classList.add('reroll'); setRerollPrice(); placeRrZone(true); }
     var lp = F.groundAt(e.clientX, e.clientY - 30 * s(), 'p'), c = F.ships.p.cellAt(lp), nx = lp.x, nz = lp.z;
-    drag.cell = c;   // клетка под бойцом для подсказок: без требования защёлкнуться в центр, иначе «+30%» мигает
-    var snapped = false;
-    if (c >= 0) { var cp = F.ships.p.cellPos(c); if (Math.hypot(cp.x - lp.x, cp.z - lp.z) < 0.25) { snapped = true; nx = cp.x; nz = cp.z; if (drag.snap !== c) { drag.snap = c; SFX.tap(); } } }
-    if (!snapped) drag.snap = -1;
-    S.sway = Math.max(-0.5, Math.min(0.5, (nx - S.x) * -2)); S.x = nx; S.z = nz;
-    H.hire.classList.toggle('armed', inRect(H.hire, e.clientX, e.clientY)); prepHints();
+    var armed = inReroll(e.clientX, e.clientY);
+    if (armed) c = -1;
+    drag.cell = c;
+    // клетка под пальцем ловит бойца целиком (раньше только в четверти клетки от центра): боец едет в её центр
+    if (c >= 0) { var cp = F.ships.p.cellPos(c); nx = cp.x; nz = cp.z; if (drag.snap !== c) { drag.snap = c; SFX.tap(); SFX.buzz && SFX.buzz(8); } } else drag.snap = -1;
+    S.sway = Math.max(-0.5, Math.min(0.5, (nx - S.x) * -2)); drag.tx = nx; drag.tz = nz;
+    // обмен: на занятой клетке (не пара для мержа) её боец подаётся навстречу
+    var occ = c >= 0 && c !== drag.from ? F.units.p[c] : null, pairM = occ && occ.type === drag.u.type && occ.rank === drag.u.rank && drag.u.rank < 3;
+    var swapU = occ && !pairM ? { u: occ, S: occ.S, cell: c, home: F.ships.p.cellPos(c) } : null;
+    if (!swapU || !drag.swapU || drag.swapU.u !== swapU.u) { releaseSwap(drag); drag.swapU = swapU; }
+    F.dropMark('p', c >= 0 && c !== drag.from && !pairM ? c : -1, c >= 0 && F.ships.p.kegs[c]);
+    S.root.scale.setScalar((1 + 0.12 * (drag.u.rank - 1)) * (armed ? 0.85 : 1.15));
+    H.hire.classList.toggle('armed', armed); H.rrZone && H.rrZone.classList.toggle('armed', armed); prepHints();
   });
   function setRerollPrice() {
     var u = drag.u, lbl = H.hire.querySelector('.lbl'), pr = H.hire.querySelector('.price b');
@@ -572,13 +599,13 @@
     H.hire.classList.toggle('poor', u.rank < 3 && M.sides[0].coins < (u.rank === 1 ? B.reroll.rank1 : B.reroll.rank2));
   }
   function endDrag(e, cancel) {
-    var d = drag; drag = null; if (!d) return; prepHints();
+    var d = drag; drag = null; if (!d) return; prepHints(); releaseSwap(d); F.dropMark('p', -1); placeRrZone(false);
     H.hire.classList.remove('reroll', 'armed', 'locked'); H.hire.querySelector('.lbl').textContent = 'Hire'; updateHire();
     var u = d.u, S = u.S; S.lift = 0; S.sway = 0; u.badge.visible = true; S.root.scale.setScalar(1 + 0.12 * (u.rank - 1));
     var back = function () { var p = F.ships.p.cellPos(d.from); S.x = p.x; S.z = p.z; };
     if (!d.moved) { F.kits.p.act(S); return; }
     if (cancel) { back(); return; }
-    if (inRect(H.hire, e.clientX, e.clientY)) { back(); M.reroll(0, d.from); return; }
+    if (inReroll(e.clientX, e.clientY)) { back(); M.reroll(0, d.from); return; }
     var lp = F.groundAt(e.clientX, e.clientY - 30 * s(), 'p'), c = F.ships.p.cellAt(lp);
     if (c < 0 || c === d.from) { back(); return; }
     var r = M.move(0, d.from, c); if (!r) { back(); SFX.deny(); }
@@ -605,7 +632,7 @@
     return new Promise(function (resolve) {
       phase = 'prep'; hintShown = false; lastInput = performance.now(); hurryT0 = 0; prepHired = false;
       H.eReady.hidden = true; H.eAv.classList.remove('isReady'); H.ready.classList.remove('done', 'green', 'x2');
-      H.hire.classList.remove('off'); H.round.textContent = 'Round ' + round + '/3';
+      H.hire.classList.remove('off'); setRoundLbl(round);
       deferIncome = flyIncome();   // метка дохода улетает в счётчик, он докрутится по прилёту
       M.startPrep(round); updateHire(); updateCrew(); refreshMarks(); prepHints();
       prepMs = B.match.rounds[round - 1].prep * 1000 * (dev.short ? 0.5 : 1); prepEnd = performance.now() + prepMs;
@@ -757,7 +784,7 @@
       }
       show('prep'); placeHud('prep'); await prep(r);
       if (r <= 2) {
-        phase = 'battle'; prepHints(); show('battle'); placeHud('battle'); F.setFrame('battle'); F.showHp(true); syncHp(); H.hire.classList.add('off'); H.ready.classList.add('x2');
+        phase = 'battle'; prepHints(); H.eReady.hidden = true; H.eAv.classList.remove('isReady');   /* галочка готовности соперника только в подготовке */ show('battle'); placeHud('battle'); F.setFrame('battle'); F.showHp(true); syncHp(); H.hire.classList.add('off'); H.ready.classList.add('x2');
         setReadyLbl('x2');
         H.ready.onclick = function () { setSpeed(speed === 1 ? 2 : 1); SFX.tap(); };
         pendingIncome = null; setIncome(B.economy.income[r]); showIncome(true);   // доход следующей подготовки, будет расти от убийств
@@ -770,8 +797,13 @@
         F.setFrame('prep'); F.showHp(false); H.ready.classList.remove('x2');
         await banner('Раунд ' + (r + 1) + '/3', 900);
       } else {
-        phase = 'boarding'; prepHints(); show('boarding'); placeHud('boarding'); F.setFrame('board'); F.showHp(true); syncHp(); H.hire.classList.add('off'); H.ready.classList.add('x2');
+        phase = 'boarding'; prepHints(); H.eReady.hidden = true; H.eAv.classList.remove('isReady');   /* галочка готовности соперника только в подготовке */ show('boarding'); placeHud('boarding'); setRoundLbl(3); F.setFrame('board'); F.showHp(true); syncHp(); H.hire.classList.add('off'); H.ready.classList.add('x2');
         setReadyLbl('x2'); H.ready.onclick = function () { setSpeed(speed === 1 ? 2 : 1); SFX.tap(); };
+        // анонс: корабли сходятся бортами с хрустом, баннер «НА АБОРДАЖ!», наши поднимают оружие и кричат, враги пригибаются
+        setTimeout(function () { F.boardCrunch(); }, 600);
+        setTimeout(function () { Object.keys(F.units.p).forEach(function (c, i) { setTimeout(function () { var u = F.units.p[c]; if (u) F.kits.p.act(u.S); }, i * 60); });
+          Object.keys(F.units.e).forEach(function (c) { var u = F.units.e[c]; if (u) F.kits.e.flinch(u.S); }); SFX.cheer(); }, 750);
+        await banner('НА АБОРДАЖ!', 1300, 'board');
         var br = M.board(); await boardIntro(br);
         await playTimeline(br, 'board'); setSpeed(1);
         await Promise.all([collectLoot(), celebrate()]);
@@ -871,7 +903,7 @@
   function boardIntro(br) {
     return new Promise(function (resolve) {
       var ev = br.events.filter(function (e) { return e.type === 'board'; })[0];
-      SFX.hook();
+      SFX.hook(); F.ultSlow(0.75, 0.35);   // кошки летят в замедлении
       [0.25, 0.5, 0.75].forEach(function (t, i) { setTimeout(function () {
         var a = F.ships.p.deck.localToWorld(new THREE.Vector3(F.ships.p.gx0 + 4 * t, 0.2, -1.6)), b = F.ships.e.deck.localToWorld(new THREE.Vector3(F.ships.e.gx0 + 4 * t, 0.2, -1.6));
         F.fx.hook(a, b, 0.45);
@@ -885,7 +917,12 @@
         var tot = ev.power[0] + ev.power[1], v = tot ? ev.power[0] / tot : 0.5;
         H.power.hidden = false; put(H.power, RECTS.power); H.power.querySelector('.pf').style.width = '50%'; H.power.querySelector('b').textContent = '';
         setTimeout(function () { H.power.querySelector('.pf').style.width = (v * 100) + '%'; H.power.querySelector('b').textContent = Math.round(v * 100) + ' : ' + Math.round(100 - v * 100); }, 300);
-        setTimeout(function () { H.power.hidden = true; resolve(); }, 1900 * (dev.short ? 0.6 : 1));
+        // под полосой: откуда сила, корпус и карта у обеих сторон
+        var note = function (i) { var S2 = M.sides[i], c2 = S2.card ? CARD_UI[S2.card.type].name : 'без карты'; return 'корпус ' + Math.round(S2.hull / S2.hullMax * 100) + '%, ' + c2; };
+        var pn = el('powerNote', ui, '<span class="me">Мы: ' + note(0) + '</span><span class="foe">Враг: ' + note(1) + '</span>');
+        var pr = RECTS.power; pn.style.left = pr.x + 'px'; pn.style.top = (pr.y + pr.h + 4 * s()) + 'px'; pn.style.width = pr.w + 'px';
+        H.power.classList.remove('pop'); void H.power.offsetWidth; H.power.classList.add('pop');
+        setTimeout(function () { H.power.hidden = true; pn.remove(); resolve(); }, 2300 * (dev.short ? 0.6 : 1));
       } else setTimeout(resolve, 600);
     });
   }
@@ -1086,7 +1123,7 @@
   function loop(now) {
     var dt = Math.min(0.05, (now - last) / 1000); last = now;
     if (!stage.style.visibility || stage.style.visibility === 'visible') F.update(dt);
-    tickMarks(); tickAccent(); tickBoostLbls();
+    tickMarks(); tickAccent(); tickBoostLbls(); tickDrag();
     fpsN++; fpsA += dt; if (fpsA > 0.5) { var f = $('fps'); if (f) f.textContent = Math.round(fpsN / fpsA) + ' FPS'; fpsN = 0; fpsA = 0; }
     requestAnimationFrame(loop);
   }

@@ -390,6 +390,23 @@
       Object.keys(F.ships[side].kegs).forEach(function (c) { F.setKeg(side, +c, false); });
     };
 
+    // абордаж: корабли сходятся бортами с хрустом, щепки вдоль линии касания, оба корабля качнуло
+    F.boardCrunch = function () {
+      var P = F.ships.p, E = F.ships.e; P.root.updateMatrixWorld(true); E.root.updateMatrixWorld(true);
+      var mid = P.root.position.clone().add(E.root.position).multiplyScalar(0.5), dir = E.root.position.clone().sub(P.root.position).setY(0).normalize();
+      for (var i = 0; i < 5; i++) { var q = mid.clone().add(new THREE.Vector3(-2 + i, 0.3, 0)); F.fx.splinters(q, dir.clone().multiplyScalar(i % 2 ? 1 : -1)); if (i % 2) F.fx.dust(q, 2); }
+      F.fx.splash(mid.clone().setY(0.05)); F.light(mid, { color: 0xffc070, r: 2.4, life: 0.3, a: 0.6 });
+      P.kick(-2.2); E.kick(2.2); F.shake(9); F.hitstop(90); F.sfx.boom(); F.sfx.hit(); F.sfx.land();
+    };
+    // метка клетки, куда встанет боец при отпускании: белая рамка; на бочке красная (туда нельзя)
+    var dropTex = (function () { var c = document.createElement('canvas'); c.width = c.height = 128; var g = c.getContext('2d'); g.strokeStyle = '#fff'; g.lineWidth = 12;
+      var r = 22; g.beginPath(); g.moveTo(10 + r, 10); g.arcTo(118, 10, 118, 118, r); g.arcTo(118, 118, 10, 118, r); g.arcTo(10, 118, 10, 10, r); g.arcTo(10, 10, 118, 10, r); g.closePath(); g.stroke(); return new THREE.CanvasTexture(c); })();
+    var dropM = new THREE.Mesh(new THREE.PlaneGeometry(0.98, 0.98), new THREE.MeshBasicMaterial({ map: dropTex, transparent: true, depthWrite: false })); dropM.rotation.x = -Math.PI / 2; dropM.visible = false; dropM.renderOrder = 2;
+    F.dropMark = function (side, cell, bad) {
+      if (cell == null || cell < 0) { dropM.visible = false; return; }
+      var sh = F.ships[side]; if (dropM.parent !== sh.deck) sh.deck.add(dropM); var cp = sh.cellPos(cell);
+      dropM.position.set(cp.x, 0.022, cp.z); dropM.material.color.setHex(bad ? 0xff4a3a : 0xffffff); dropM.material.opacity = bad ? 0.9 : 0.85; dropM.visible = true;
+    };
     // ---------- камера: доворот и короткий наезд ----------
     var nudgeT = 0, zpT = 0;
     F.nudge = function (x, z) { F.nudgeV = new THREE.Vector3(x, 0, z).multiplyScalar(Math.min(1.5, F.juice)); nudgeT = 0; };
